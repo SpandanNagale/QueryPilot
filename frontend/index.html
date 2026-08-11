@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QueryPilot</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38; --text: #e6e8ec;
+    --muted: #8b93a3; --accent: #4f8cff; --accent-dim: #2c4a85;
+    --danger: #e5534b; --ok: #3fb950; --user-bubble: #1f3a63; --bot-bubble: #1c1f28;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; }
+
+  #sidebar { width: 280px; border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; flex-shrink: 0; }
+  #sidebar h2 { font-size: 15px; margin: 0 0 8px; }
+  #sidebar pre { white-space: pre-wrap; font-size: 11px; color: var(--muted); line-height: 1.5; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .msg { max-width: 720px; padding: 12px 16px; border-radius: 10px; line-height: 1.5; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--user-bubble); }
+  .msg.bot { align-self: flex-start; background: var(--bot-bubble); border: 1px solid var(--border); }
+  .msg.error { align-self: flex-start; background: #3a1f1f; border: 1px solid var(--danger); color: #ffb4ae; }
+
+  details.sql-block { margin-top: 8px; font-size: 12px; }
+  details.sql-block summary { cursor: pointer; color: var(--accent); }
+  details.sql-block code { display: block; margin-top: 6px; padding: 8px; background: #0b0d11; border-radius: 6px; overflow-x: auto; color: #9fd0ff; }
+
+  table.preview { border-collapse: collapse; margin-top: 10px; font-size: 12px; width: 100%; }
+  table.preview th, table.preview td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  table.preview th { background: #20242e; }
+  .diff-old { color: #ff9b93; text-decoration: line-through; }
+  .diff-new { color: #7fe08a; }
+
+  .confirm-row { margin-top: 12px; display: flex; gap: 8px; }
+  .confirm-row button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+  .btn-yes { background: var(--ok); color: #06210c; border: none; }
+  .btn-no { background: transparent; color: var(--text); }
+
+  .followups { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .followup-chip { border: 1px solid var(--accent-dim); color: var(--accent); background: transparent; padding: 4px 10px; border-radius: 14px; font-size: 12px; cursor: pointer; }
+  .followup-chip:hover { background: var(--accent-dim); }
+
+  #inputRow { border-top: 1px solid var(--border); padding: 16px; display: flex; gap: 10px; }
+  #inputBox { flex: 1; background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 14px; }
+  #sendBtn { background: var(--accent); color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  #sendBtn:disabled { opacity: 0.5; cursor: default; }
+
+  .typing { color: var(--muted); font-size: 13px; }
+  svg.chart { margin-top: 12px; background: #0b0d11; border-radius: 8px; }
+
+  .table-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .table-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; text-align: left; color: var(--text); font: inherit; }
+  .table-card:hover { border-color: var(--accent-dim); }
+  .table-card .tname { font-size: 13px; font-weight: 600; }
+  .table-card .tmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  details.schema-raw { font-size: 11px; }
+  details.schema-raw summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }
+  details.schema-raw pre { white-space: pre-wrap; color: var(--muted); line-height: 1.5; }
+
+  #modalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+  #modalOverlay.open { display: flex; }
+  #dataModal { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(1100px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+  #modalHeader { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  #modalHeader h3 { margin: 0; font-size: 15px; }
+  #modalHeader .modalSub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #modalClose { background: transparent; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+  #modalClose:hover { color: var(--text); }
+  #modalBody { overflow: auto; padding: 0 18px; }
+  #modalBody table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  #modalBody th, #modalBody td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; white-space: nowrap; }
+  #modalBody th { background: #20242e; position: sticky; top: 0; }
+  #modalFooter { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  #modalFooter .pager { display: flex; gap: 8px; }
+  #modalFooter button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; font-size: 12px; }
+  #modalFooter button:disabled { opacity: 0.4; cursor: default; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>QueryPilot</h2>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Cold-drinks wholesale distribution &mdash; Ratnagiri district</div>
+  <h2 style="font-size:13px;">Tables</h2>
+  <div id="tableList" class="table-list"><div style="font-size:12px;color:var(--muted);">Loading tables...</div></div>
+  <details class="schema-raw">
+    <summary>Raw schema (columns &amp; types)</summary>
+    <pre id="schemaBox">Loading schema...</pre>
+  </details>
+</div>
+
+<div id="modalOverlay">
+  <div id="dataModal">
+    <div id="modalHeader">
+      <div>
+        <h3 id="modalTitle">table</h3>
+        <div class="modalSub" id="modalSub"></div>
+      </div>
+      <button id="modalClose">&times;</button>
+    </div>
+    <div id="modalBody"><div style="padding:16px;color:var(--muted);">Loading...</div></div>
+    <div id="modalFooter">
+      <span id="modalRange"></span>
+      <div class="pager">
+        <button id="modalPrev">&larr; Prev</button>
+        <button id="modalNext">Next &rarr;</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="messages"></div>
+  <div id="inputRow">
+    <input id="inputBox" type="text" placeholder="Ask about your data, or tell me to change something..." autocomplete="off">
+    <button id="sendBtn">Send</button>
+  </div>
+</div>
+
+<script>
+const sessionId = localStorage.getItem("qp_session_id") || crypto.randomUUID();
+localStorage.setItem("qp_session_id", sessionId);
+
+const messagesEl = document.getElementById("messages");
+const inputBox = document.getElementById("inputBox");
+const sendBtn = document.getElementById("sendBtn");
+const schemaBox = document.getElementById("schemaBox");
+const tableListEl = document.getElementById("tableList");
+
+const modalOverlay = document.getElementById("modalOverlay");
+const modalTitle = document.getElementById("modalTitle");
+const modalSub = document.getElementById("modalSub");
+const modalBody = document.getElementById("modalBody");
+const modalRange = document.getElementById("modalRange");
+const modalPrev = document.getElementById("modalPrev");
+const modalNext = document.getElementById("modalNext");
+
+const PAGE_SIZE = 50;
+let modalState = { table: null, offset: 0, total: 0 };
+
+async function loadTableList() {
+  try {
+    const resp = await fetch("/tables");
+    const data = await resp.json();
+    tableListEl.innerHTML = "";
+    data.tables.forEach(t => {
+      const card = document.createElement("button");
+      card.className = "table-card";
+      card.innerHTML = `<div class="tname">${t.name}</div><div class="tmeta">${t.row_count.toLocaleString()} rows &middot; ${t.columns.length} columns</div>`;
+      card.title = t.purpose || "";
+      card.onclick = () => openTablePreview(t.name);
+      tableListEl.appendChild(card);
+    });
+  } catch (e) {
+    tableListEl.innerHTML = `<div style="font-size:12px;color:var(--danger);">Could not load tables.</div>`;
+  }
+}
+
+async function openTablePreview(table, offset = 0) {
+  modalState = { table, offset, total: modalState.table === table ? modalState.total : 0 };
+  modalOverlay.classList.add("open");
+  modalTitle.textContent = table;
+  modalBody.innerHTML = `<div style="padding:16px;color:var(--muted);">Loading...</div>`;
+  try {
+    const resp = await fetch(`/tables/${encodeURIComponent(table)}/preview?limit=${PAGE_SIZE}&offset=${offset}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    modalState.total = data.row_count;
+    renderModalTable(data);
+  } catch (e) {
+    modalBody.innerHTML = `<div style="padding:16px;color:var(--danger);">Failed to load preview: ${e.message}</div>`;
+  }
+}
+
+function renderModalTable(data) {
+  modalSub.textContent = `${data.row_count.toLocaleString()} total rows`;
+  if (!data.rows.length) {
+    modalBody.innerHTML = `<div style="padding:16px;color:var(--muted);">This table is empty.</div>`;
+  } else {
+    const header = "<tr>" + data.columns.map(c => `<th>${c}</th>`).join("") + "</tr>";
+    const body = data.rows.map(row =>
+      "<tr>" + data.columns.map(c => `<td>${row[c] === null ? "" : row[c]}</td>`).join("") + "</tr>"
+    ).join("");
+    modalBody.innerHTML = `<table>${header}${body}</table>`;
+  }
+  const start = data.row_count === 0 ? 0 : data.offset + 1;
+  const end = Math.min(data.offset + data.limit, data.row_count);
+  modalRange.textContent = `${start}-${end} of ${data.row_count.toLocaleString()}`;
+  modalPrev.disabled = data.offset <= 0;
+  modalNext.disabled = data.offset + data.limit >= data.row_count;
+}
+
+modalPrev.onclick = () => {
+  if (modalState.offset <= 0) return;
+  openTablePreview(modalState.table, Math.max(0, modalState.offset - PAGE_SIZE));
+};
+modalNext.onclick = () => {
+  if (modalState.offset + PAGE_SIZE >= modalState.total) return;
+  openTablePreview(modalState.table, modalState.offset + PAGE_SIZE);
+};
+document.getElementById("modalClose").onclick = () => modalOverlay.classList.remove("open");
+modalOverlay.addEventListener("click", e => { if (e.target === modalOverlay) modalOverlay.classList.remove("open"); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") modalOverlay.classList.remove("open"); });
+
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  if (role === "bot") {
+    // Bot messages grow additional children (SQL block, preview table,
+    // chart, confirm buttons) alongside the text as the stream progresses.
+    // Keeping the text in its own node means later blocks never get wiped
+    // out by a textContent reset when streaming starts.
+    const span = document.createElement("span");
+    span.className = "response-text";
+    span.textContent = text;
+    div.appendChild(span);
+  } else {
+    div.textContent = text;
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function getResponseText(container) {
+  return container.querySelector(".response-text");
+}
+
+function setResponseText(container, text) {
+  const span = getResponseText(container);
+  if (span) span.textContent = text;
+}
+
+function appendResponseText(container, text) {
+  const span = getResponseText(container);
+  if (span) span.textContent += text;
+}
+
+function addSqlBlock(container, sql) {
+  if (!sql) return;
+  let details = container.querySelector("details.sql-block");
+  if (!details) {
+    details = document.createElement("details");
+    details.className = "sql-block";
+    details.innerHTML = "<summary>View SQL</summary><code></code>";
+    container.appendChild(details);
+  }
+  details.querySelector("code").textContent = sql;
+}
+
+function renderPreviewTable(container, preview) {
+  const table = document.createElement("table");
+  table.className = "preview";
+  if (preview.operation === "INSERT") {
+    const rows = Object.entries(preview.insert_values || {});
+    table.innerHTML = "<tr><th>column</th><th>value</th></tr>" +
+      rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+  } else if (preview.rows && preview.rows.length) {
+    const cols = Object.keys(preview.rows[0]);
+    const header = "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>";
+    const body = preview.rows.map(row => {
+      return "<tr>" + cols.map(c => {
+        if (c.startsWith("old_")) return `<td class="diff-old">${row[c]}</td>`;
+        if (c.startsWith("new_")) return `<td class="diff-new">${row[c]}</td>`;
+        return `<td>${row[c]}</td>`;
+      }).join("") + "</tr>";
+    }).join("");
+    table.innerHTML = header + body;
+  } else {
+    container.appendChild(Object.assign(document.createElement("div"), {
+      textContent: `No rows match (${preview.operation} on ${preview.table}).`,
+    }));
+    return;
+  }
+  container.appendChild(table);
+  const caption = document.createElement("div");
+  caption.style.cssText = "font-size:12px;color:var(--muted);margin-top:4px;";
+  caption.textContent = `${preview.operation} on ${preview.table} — ${preview.row_count} row(s) affected`;
+  container.appendChild(caption);
+
+  if (preview.cascades && preview.cascades.length) {
+    const warn = document.createElement("div");
+    warn.style.cssText = "font-size:12px;color:#ffcf6e;margin-top:8px;padding:8px;border:1px solid #6b5a2a;border-radius:6px;";
+    const summary = preview.cascades.map(c => `${c.row_count} row(s) in "${c.table}"`).join(", ");
+    warn.textContent = `This will also delete: ${summary} (linked via foreign key).`;
+    container.appendChild(warn);
+
+    for (const cascade of preview.cascades) {
+      const details = document.createElement("details");
+      details.className = "sql-block";
+      const cols = cascade.rows.length ? Object.keys(cascade.rows[0]) : [];
+      const cascadeTable = `<table class="preview">` +
+        `<tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr>` +
+        cascade.rows.map(row => `<tr>${cols.map(c => `<td>${row[c]}</td>`).join("")}</tr>`).join("") +
+        `</table>`;
+      details.innerHTML = `<summary>View ${cascade.row_count} affected row(s) in "${cascade.table}"</summary>${cascadeTable}`;
+      container.appendChild(details);
+    }
+  }
+}
+
+function renderChart(container, spec, rows) {
+  if (!spec || !rows || !rows.length) return;
+  const W = 640, H = 260, PAD = 36;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+
+  const data = rows.slice(0, 20).map(r => ({ x: String(r[spec.x]), y: Number(r[spec.y]) || 0 }));
+  const maxY = Math.max(...data.map(d => d.y), 1);
+
+  const title = document.createElementNS(svg.namespaceURI, "text");
+  title.setAttribute("x", PAD); title.setAttribute("y", 16); title.setAttribute("fill", "#e6e8ec"); title.setAttribute("font-size", "12");
+  title.textContent = spec.title || "";
+  svg.appendChild(title);
+
+  if (spec.type === "pie") {
+    const total = data.reduce((s, d) => s + d.y, 0) || 1;
+    const cx = W / 2, cy = H / 2 + 10, r = 90;
+    let angle = -Math.PI / 2;
+    const colors = ["#4f8cff", "#7fe08a", "#ffcf6e", "#ff9b93", "#c792ea", "#66d9ef", "#f78c6c", "#82aaff"];
+    data.forEach((d, i) => {
+      const slice = (d.y / total) * 2 * Math.PI;
+      const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+      angle += slice;
+      const x2 = cx + r * Math.cos(angle), y2 = cy + r * Math.sin(angle);
+      const large = slice > Math.PI ? 1 : 0;
+      const path = document.createElementNS(svg.namespaceURI, "path");
+      path.setAttribute("d", `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} Z`);
+      path.setAttribute("fill", colors[i % colors.length]);
+      svg.appendChild(path);
+    });
+  } else {
+    const barW = (W - PAD * 2) / data.length;
+    data.forEach((d, i) => {
+      const barH = (d.y / maxY) * (H - PAD * 2);
+      if (spec.type === "line") {
+        if (i > 0) {
+          const prev = data[i - 1];
+          const line = document.createElementNS(svg.namespaceURI, "line");
+          line.setAttribute("x1", PAD + (i - 1) * barW + barW / 2);
+          line.setAttribute("y1", H - PAD - (prev.y / maxY) * (H - PAD * 2));
+          line.setAttribute("x2", PAD + i * barW + barW / 2);
+          line.setAttribute("y2", H - PAD - barH);
+          line.setAttribute("stroke", "#4f8cff"); line.setAttribute("stroke-width", "2");
+          svg.appendChild(line);
+        }
+        const circle = document.createElementNS(svg.namespaceURI, "circle");
+        circle.setAttribute("cx", PAD + i * barW + barW / 2);
+        circle.setAttribute("cy", H - PAD - barH);
+        circle.setAttribute("r", 3); circle.setAttribute("fill", "#4f8cff");
+        svg.appendChild(circle);
+      } else {
+        const rect = document.createElementNS(svg.namespaceURI, "rect");
+        rect.setAttribute("x", PAD + i * barW + 4);
+        rect.setAttribute("y", H - PAD - barH);
+        rect.setAttribute("width", Math.max(barW - 8, 2));
+        rect.setAttribute("height", barH);
+        rect.setAttribute("fill", "#4f8cff");
+        svg.appendChild(rect);
+      }
+      const label = document.createElementNS(svg.namespaceURI, "text");
+      label.setAttribute("x", PAD + i * barW + barW / 2);
+      label.setAttribute("y", H - PAD + 14);
+      label.setAttribute("fill", "#8b93a3"); label.setAttribute("font-size", "9");
+      label.setAttribute("text-anchor", "middle");
+      label.textContent = d.x.length > 10 ? d.x.slice(0, 9) + "…" : d.x;
+      svg.appendChild(label);
+    });
+  }
+  container.appendChild(svg);
+}
+
+function renderFollowups(container, followups) {
+  if (!followups || !followups.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "followups";
+  followups.forEach(q => {
+    const chip = document.createElement("button");
+    chip.className = "followup-chip";
+    chip.textContent = q;
+    chip.onclick = () => { inputBox.value = q; sendMessage(); };
+    wrap.appendChild(chip);
+  });
+  container.appendChild(wrap);
+}
+
+async function streamRequest(url, body, botDiv) {
+  let lastRows = null;
+  let chartSpec = null;
+  let gotToken = false;
+  let previewRendered = false;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    setResponseText(botDiv, `Request failed: HTTP ${resp.status}`);
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const eventMatch = block.match(/^event: (.+)$/m);
+      const dataMatch = block.match(/^data: (.+)$/m);
+      if (!eventMatch || !dataMatch) continue;
+      const event = eventMatch[1];
+      const data = JSON.parse(dataMatch[1]);
+
+      if (event === "token") {
+        if (!gotToken) { setResponseText(botDiv, ""); gotToken = true; }
+        appendResponseText(botDiv, data.token);
+      } else if (event === "sql_generated") {
+        setResponseText(botDiv, "");
+        addSqlBlock(botDiv, data.generated_sql);
+      } else if (event === "preview" || event === "awaiting_confirmation") {
+        setResponseText(botDiv, "");
+        if (data.generated_sql) addSqlBlock(botDiv, data.generated_sql);
+        // Both events carry the same preview payload (dry_run_preview's state
+        // update, then the interrupt payload) - render the table only once.
+        if (data.preview && !previewRendered) {
+          renderPreviewTable(botDiv, data.preview);
+          previewRendered = true;
+        }
+        if (event === "awaiting_confirmation") {
+          const row = document.createElement("div");
+          row.className = "confirm-row";
+          const yesBtn = document.createElement("button");
+          yesBtn.className = "btn-yes"; yesBtn.textContent = "Confirm";
+          const noBtn = document.createElement("button");
+          noBtn.className = "btn-no"; noBtn.textContent = "Cancel";
+          row.appendChild(yesBtn); row.appendChild(noBtn);
+          botDiv.appendChild(row);
+
+          yesBtn.onclick = () => { row.remove(); respondConfirm(true); };
+          noBtn.onclick = () => { row.remove(); respondConfirm(false); };
+        }
+      } else if (event === "result") {
+        if (data.execution_result) {
+          lastRows = data.execution_result.rows;
+        }
+        if (data.final_response) {
+          setResponseText(botDiv, data.final_response);
+        }
+      } else if (event === "chart") {
+        chartSpec = data.chart_spec;
+        if (chartSpec && lastRows) renderChart(botDiv, chartSpec, lastRows);
+      } else if (event === "followups") {
+        renderFollowups(botDiv, data.followups);
+      } else if (event === "message") {
+        setResponseText(botDiv, data.final_response || "");
+      } else if (event === "error") {
+        botDiv.classList.add("error");
+        const existing = getResponseText(botDiv).textContent;
+        setResponseText(botDiv, (existing ? existing + "\n" : "") + "Error: " + data.error);
+      } else if (event === "done") {
+        // no-op: stream finished
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+}
+
+async function sendMessage() {
+  const text = inputBox.value.trim();
+  if (!text) return;
+  inputBox.value = "";
+  sendBtn.disabled = true;
+
+  addMessage("user", text);
+  const botDiv = addMessage("bot", "…");
+
+  try {
+    await streamRequest("/chat", { session_id: sessionId, message: text }, botDiv);
+  } catch (e) {
+    botDiv.classList.add("error");
+    setResponseText(botDiv, "Connection error: " + e.message);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+async function respondConfirm(confirmed) {
+  const botDiv = addMessage("bot", "…");
+  sendBtn.disabled = true;
+  try {
+    await streamRequest("/confirm", { session_id: sessionId, confirmed }, botDiv);
+  } catch (e) {
+    botDiv.classList.add("error");
+    setResponseText(botDiv, "Connection error: " + e.message);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+sendBtn.onclick = sendMessage;
+inputBox.addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(); });
+
+async function init() {
+  loadTableList();
+  try {
+    const resp = await fetch("/schema");
+    const data = await resp.json();
+    schemaBox.textContent = data.schema;
+    addMessage("bot", data.tour);
+  } catch (e) {
+    schemaBox.textContent = "Could not load schema — is the backend running?";
+  }
+}
+init();
+</script>
+</body>
+</html>

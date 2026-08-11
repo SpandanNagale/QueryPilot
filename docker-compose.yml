@@ -1,0 +1,66 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: querypilot-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # GPU passthrough (NVIDIA). If you don't have a GPU, delete this
+    # `deploy` block entirely - Ollama will fall back to CPU inference
+    # (much slower, but the app still works).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot: pulls the three models QueryPilot needs, then exits. `app`
+  # waits for this to complete successfully before starting. Re-running
+  # `docker compose up` after the first time is fast - `ollama pull` is a
+  # no-op once a model is already present in the ollama_data volume.
+  model-init:
+    image: ollama/ollama:latest
+    container_name: querypilot-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        ollama pull qwen2.5-coder:14b &&
+        ollama pull qwen3:14b &&
+        ollama pull nomic-embed-text
+
+  app:
+    build: .
+    container_name: querypilot-app
+    ports:
+      - "8000:8000"
+    environment:
+      - QP_OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      ollama:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
