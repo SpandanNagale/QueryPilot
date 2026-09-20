@@ -57,6 +57,17 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    # `required: false` lets these targets be absent from the default
+    # (no --profile) run without erroring, since ollama/model-init only
+    # exist under the local-llm profile. When that profile IS active,
+    # the condition is still honored and app waits for it as normal.
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
+      model-init:
+        condition: service_completed_successfully
+        required: false
     restart: unless-stopped
 
 volumes:
