@@ -26,10 +26,10 @@ class Settings(BaseSettings):
     max_self_correction_attempts: int = 3 # total attempts including the first, on execution error
     confirmation_timeout_seconds: int = 60
 
-    # --- LLM (Ollama, fully local) ---
-    ollama_host: str = "http://localhost:11434"
-    sql_gen_model: str = "qwen2.5-coder:14b"
-    chat_model: str = "qwen3:14b"
+    # --- LLM gateway ---
+    llm_profile: str = "cloud"   # "cloud" (default, deployed chain) or "local" (dev-only, forces ollama_local)
+    model_groups_path: Path = PROJECT_ROOT / "config" / "model_groups.yaml"
+    ollama_host: str = "http://localhost:11434"   # local Ollama: used by QP_LLM_PROFILE=local and by schema embeddings
     embed_model: str = "nomic-embed-text"
     llm_request_timeout_seconds: int = 60
 
@@ -54,3 +54,23 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+class ProviderCredentials(BaseSettings):
+    """Cloud LLM provider credentials. Deliberately NOT under the QP_ prefix
+    -- these are the exact env var names the deployment docs and Render
+    blueprint use (OLLAMA_API_KEY, GEMINI_API_KEY, etc.), matching the
+    sibling Crewai-Research-pipeline repo's config/settings.py convention."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
+
+    ollama_api_key: str = ""
+    ollama_cloud_host: str = "https://ollama.com"
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+
+
+provider_credentials = ProviderCredentials()
