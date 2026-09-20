@@ -2,13 +2,24 @@
 run summary and Phase 3's budget kill-switch have a number to work with.
 USD per 1,000,000 tokens (prompt, completion). Free-tier or not-yet-priced
 deployments default to 0.0 rather than raising -- this is a best-effort
-estimate, never a safety boundary. Confirm/refresh these against each
-provider's pricing page during Task 12's live verification."""
+estimate, never a safety boundary.
+
+Rates below were refreshed 2026-09-20 (Task 12 live verification) against
+each provider's pricing page:
+  - Groq: console.groq.com/docs/model/openai/gpt-oss-120b and .../20b
+  - Gemini: ai.google.dev pricing page, gemini-3.x Flash tier (promotional
+    rate through 2026-12-31; rises to $1.50/$7.50 on 2027-01-01 -- revisit
+    this entry after that date)
+Ollama Cloud (gpt-oss:120b, gpt-oss:20b) and OpenRouter's `:free`-suffixed
+models are genuinely free-tier for the deployments this gateway actually
+uses (confirmed live -- calls succeeded with no payment-required error) and
+intentionally have no entry here, falling through to the 0.0 default."""
 from __future__ import annotations
 
 _PRICE_PER_MILLION_TOKENS_USD: dict[tuple[str, str], tuple[float, float]] = {
-    ("groq", "openai/gpt-oss-120b"): (0.15, 0.75),
-    ("groq", "openai/gpt-oss-20b"): (0.05, 0.20),
+    ("groq", "openai/gpt-oss-120b"): (0.15, 0.60),
+    ("groq", "openai/gpt-oss-20b"): (0.075, 0.30),
+    ("gemini", "gemini-3.6-flash"): (0.75, 3.75),
 }
 
 

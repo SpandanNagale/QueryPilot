@@ -3,29 +3,50 @@
 # alias ("sql_gen" or "chat"). Entries under `local:` are used only when
 # QP_LLM_PROFILE=local (offline dev against a local Ollama server).
 #
-# Models marked TO LIVE-VERIFY are the spec's suggested starting points --
-# Task 12 confirms the exact tag each provider actually serves and updates
-# this file, recording what changed in docs/phases/01-llm-gateway.md.
+# All entries below were live-verified against the real provider APIs on
+# 2026-09-20 (Task 12). See docs/phases/01-llm-gateway.md for the full
+# verification log, including models that were tried and rejected.
 
 sql_gen:
   - provider: ollama_cloud
-    model: qwen3-coder:480b-cloud  # TO LIVE-VERIFY
+    # changed 2026-09-20: qwen3-coder:480b-cloud does not exist on this
+    # account's Ollama Cloud host (ollama.Client(...).list() does not list
+    # it, no "-cloud" suffix variant exists either) and no coder-specific
+    # model is included in the free tier (kimi-k2.7-code exists but returned
+    # HTTP 402 "not included in your free usage"). gpt-oss:120b is confirmed
+    # free-tier and responds correctly to a live call.
+    model: gpt-oss:120b
   - provider: openrouter
-    model: qwen/qwen-2.5-coder-32b-instruct:free  # TO LIVE-VERIFY
+    # changed 2026-09-20: qwen/qwen-2.5-coder-32b-instruct:free returned
+    # HTTP 404 "This model is unavailable for free" (OpenRouter delisted the
+    # free variant). cohere/north-mini-code:free is a coder-focused free
+    # model confirmed live.
+    model: cohere/north-mini-code:free
   - provider: gemini
-    model: gemini-3.6-flash  # TO LIVE-VERIFY
+    model: gemini-3.6-flash  # confirmed live 2026-09-20
   - provider: groq
-    model: openai/gpt-oss-120b  # TO LIVE-VERIFY
+    model: openai/gpt-oss-120b  # confirmed live 2026-09-20
 
 chat:
   - provider: ollama_cloud
-    model: gpt-oss:120b-cloud  # TO LIVE-VERIFY
+    # changed 2026-09-20: gpt-oss:120b-cloud is not a real tag -- Ollama
+    # Cloud's direct API lists model names with NO "-cloud" suffix (confirmed
+    # via ollama.Client(...).list()). Using gpt-oss:20b here (distinct from
+    # sql_gen's gpt-oss:120b) -- confirmed free-tier and responds correctly.
+    # NOTE: structured_chat() against this deployment did not reliably
+    # return schema-conformant JSON via format=<schema> in live testing --
+    # see docs/phases/01-llm-gateway.md; the fallback chain below absorbs it.
+    model: gpt-oss:20b
   - provider: openrouter
-    model: meta-llama/llama-3.3-70b-instruct:free  # TO LIVE-VERIFY
+    # changed 2026-09-20: meta-llama/llama-3.3-70b-instruct:free returned
+    # HTTP 404 "This model is unavailable for free" (OpenRouter delisted the
+    # free variant). nvidia/nemotron-3-super-120b-a12b:free is a free
+    # general-purpose instruct model confirmed live.
+    model: nvidia/nemotron-3-super-120b-a12b:free
   - provider: gemini
-    model: gemini-3.6-flash  # TO LIVE-VERIFY
+    model: gemini-3.6-flash  # confirmed live 2026-09-20
   - provider: groq
-    model: openai/gpt-oss-20b  # TO LIVE-VERIFY
+    model: openai/gpt-oss-20b  # confirmed live 2026-09-20
 
 local:
   sql_gen:
