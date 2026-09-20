@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from app.config import settings
@@ -41,8 +42,5 @@ def test_read_only_engine_from_get_engines_still_refuses_writes(tmp_path):
     shutil.copyfile(settings.template_db_path, db_path)
     ro, _ = get_engines(str(db_path))
     with ro.connect() as conn:
-        try:
+        with pytest.raises(Exception):
             conn.execute(text("DELETE FROM orders WHERE id = 1"))
-            assert False, "read-only engine must refuse writes"
-        except Exception:
-            pass
