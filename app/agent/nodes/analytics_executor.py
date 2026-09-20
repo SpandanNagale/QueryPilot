@@ -1,23 +1,25 @@
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
+
 from app.agent.state import AgentState
 from app.config import settings
 from app.core import executor as sql_executor
+from app.core.db import get_engines
 from app.core.validator import validate_sql
 
 
-def analytics_executor_node(state: AgentState) -> dict:
+def analytics_executor_node(state: AgentState, config: RunnableConfig) -> dict:
     sql = state["generated_sql"]
+    db_path = config["configurable"]["db_path"]
+    read_only_engine, _ = get_engines(db_path)
 
-    # Defense in depth: a self-corrected query is still LLM output. Re-check
-    # it deterministically before it ever reaches the DB, same as the first
-    # attempt did.
-    validation = validate_sql(sql, intent="analytics")
+    validation = validate_sql(sql, intent="analytics", engine=read_only_engine)
     if not validation.passed:
         return {"error": "; ".join(validation.reasons), "retry_count": state.get("retry_count", 0) + 1}
 
     try:
-        result = sql_executor.execute_select(sql)
+        result = sql_executor.execute_select(sql, engine=read_only_engine)
     except Exception as exc:  # noqa: BLE001 - genuinely want to catch any DB error and self-correct on it
         return {"error": str(exc), "retry_count": state.get("retry_count", 0) + 1}
 

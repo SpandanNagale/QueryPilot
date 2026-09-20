@@ -23,12 +23,16 @@ def log_event(**fields: Any) -> None:
             f.write(line + "\n")
 
 
-def read_events(limit: int = 100, offset: int = 0) -> list[dict]:
-    """Most-recent-first, for the GET /audit admin endpoint."""
+def read_events(limit: int = 100, offset: int = 0, session_id: str | None = None) -> list[dict]:
+    """Most-recent-first. Pass session_id to restrict to one session's events
+    (the default for the public /audit endpoint); omit it only for the
+    admin-token-gated full log."""
     if not settings.audit_log_path.exists():
         return []
     with open(settings.audit_log_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
     lines = list(reversed(lines))
+    if session_id is not None:
+        lines = [line for line in lines if json.loads(line).get("session_id") == session_id]
     selected = lines[offset : offset + limit]
     return [json.loads(line) for line in selected if line.strip()]

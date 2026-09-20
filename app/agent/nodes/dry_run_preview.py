@@ -5,23 +5,28 @@ from __future__ import annotations
 
 import time
 
+from langchain_core.runnables import RunnableConfig
 from sqlalchemy import text
 
 from app.agent.state import AgentState
 from app.core.audit import log_event
-from app.core.db import get_referencing_tables, read_only_engine
+from app.core.db import get_engines, get_referencing_tables
 from app.core.dry_run import build_cascade_impact_queries, build_preview
 from app.core.validator import check_row_impact
 
 
-def dry_run_preview_node(state: AgentState) -> dict:
+def dry_run_preview_node(state: AgentState, config: RunnableConfig) -> dict:
     sql = state["generated_sql"]
     started_at = time.time()
+    session_id = config["configurable"]["thread_id"]
+    db_path = config["configurable"]["db_path"]
+    read_only_engine, _ = get_engines(db_path)
 
-    impact = check_row_impact(sql)
+    impact = check_row_impact(sql, engine=read_only_engine)
     if not impact.passed:
         log_event(
             event="manipulation_blocked",
+            session_id=session_id,
             user_input=state["user_input"],
             generated_sql=sql,
             reason="; ".join(impact.reasons),
@@ -45,12 +50,9 @@ def dry_run_preview_node(state: AgentState) -> dict:
         preview_info = {"operation": preview.operation, "table": preview.table, "rows": rows, "row_count": len(rows)}
 
         if preview.operation == "DELETE":
-            # check_row_impact already vetted this: any non-cascade dependents
-            # would have blocked above, so every ref left here is a real
-            # cascade the user should see before confirming.
             cascade_refs = [
                 (r.child_table, r.child_column)
-                for r in get_referencing_tables(preview.table)
+                for r in get_referencing_tables(preview.table, engine=read_only_engine)
                 if r.on_delete == "CASCADE"
             ]
             impacts = build_cascade_impact_queries(preview, cascade_refs)
