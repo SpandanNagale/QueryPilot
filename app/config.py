@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     max_self_correction_attempts: int = 3 # total attempts including the first, on execution error
     confirmation_timeout_seconds: int = 60
     guardrail_max_input_chars: int = 2000 # input guardrail: reject raw user messages longer than this
+    rate_limit_per_minute: int = 10       # per-IP sliding-window cap on /chat and /confirm requests
 
     # --- LLM gateway ---
     llm_profile: str = "cloud"   # "cloud" (default, deployed chain) or "local" (dev-only, forces ollama_local)

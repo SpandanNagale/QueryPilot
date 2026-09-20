@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Generator
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +32,7 @@ from app.core.audit import read_events
 from app.core.db import get_engines, read_only_engine
 from app.core.errors import AppError, ErrorCode, classify_exception_to_code, classify_reason_to_code
 from app.core.llm import check_providers
+from app.core.rate_limit import check_rate_limit
 from app.core.schema_store import (
     build_or_refresh_index,
     format_schema_context,
@@ -60,6 +61,21 @@ def _resolve_session_engine(session_id: str | None):
 def _require_valid_session_id(session_id: str) -> None:
     if not sessions.is_valid_session_id(session_id):
         raise HTTPException(400, detail=_error_detail(ErrorCode.SESSION_INVALID))
+
+
+def _client_ip(request: Request) -> str:
+    """Render sits behind a proxy, so the real visitor IP is the first entry
+    of X-Forwarded-For when present; request.client.host (the proxy's own
+    address) is the fallback for direct/local connections."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _require_rate_limit_ok(request: Request) -> None:
+    if not check_rate_limit(_client_ip(request)):
+        raise HTTPException(429, detail=_error_detail(ErrorCode.RATE_LIMITED))
 
 
 _state: dict[str, Any] = {"graph": None, "checkpointer_cm": None}
@@ -226,7 +242,8 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
 
 
 @app.post("/chat")
-def chat(req: ChatRequest) -> StreamingResponse:
+def chat(req: ChatRequest, request: Request) -> StreamingResponse:
+    _require_rate_limit_ok(request)
     _require_valid_session_id(req.session_id)
     db_path = sessions.get_session_db_path(req.session_id)
     config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
@@ -242,7 +259,8 @@ def chat(req: ChatRequest) -> StreamingResponse:
 
 
 @app.post("/confirm")
-def confirm(req: ConfirmRequest) -> StreamingResponse:
+def confirm(req: ConfirmRequest, request: Request) -> StreamingResponse:
+    _require_rate_limit_ok(request)
     _require_valid_session_id(req.session_id)
     graph = _state["graph"]
     db_path = sessions.get_session_db_path(req.session_id)
