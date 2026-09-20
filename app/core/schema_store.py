@@ -17,6 +17,7 @@ import chromadb
 import ollama
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from app.config import settings
 from app.core.db import read_only_engine
@@ -103,16 +104,19 @@ def _get_client() -> chromadb.ClientAPI:
     return _client
 
 
-def introspect_tables(table_names: list[str] | None = None) -> dict[str, TableInfo]:
+def introspect_tables(
+    table_names: list[str] | None = None, engine: Engine = read_only_engine
+) -> dict[str, TableInfo]:
     """Live introspection: columns from PRAGMA, sample rows and low-cardinality
     TEXT column values (e.g. status/category enums) straight from the DB.
     Never hand-maintained, so it can't drift from the real schema.
 
     Pass table_names to introspect only a subset (e.g. the tables retrieval
-    picked) instead of every table.
+    picked) instead of every table. Pass engine to introspect a session's
+    sandbox database instead of the template.
     """
     tables: dict[str, TableInfo] = {}
-    with read_only_engine.connect() as conn:
+    with engine.connect() as conn:
         if table_names is None:
             table_names = [
                 row[0]

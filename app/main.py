@@ -25,11 +25,31 @@ from app.agent.graph import build_graph
 from app.agent.prompts import get_schema_tour
 from app.config import settings
 from app.core.audit import read_events
-from app.core.db import read_only_engine
+from app.core.db import get_engines, read_only_engine
 from app.core.llm import check_providers
 from app.core.schema_store import build_or_refresh_index, full_schema_summary, introspect_tables
+from app.core import sessions
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_session_engine(session_id: str | None):
+    """Session-aware read-only engine for GET endpoints: the template if no
+    session_id is given, or the session doesn't exist yet; that session's
+    own sandbox engine otherwise."""
+    if session_id is None:
+        return read_only_engine
+    if not sessions.is_valid_session_id(session_id):
+        raise HTTPException(400, "session_id must be a valid UUID4.")
+    db_path = sessions.get_session_db_path(session_id)
+    ro, _ = get_engines(str(db_path))
+    return ro
+
+
+def _require_valid_session_id(session_id: str) -> None:
+    if not sessions.is_valid_session_id(session_id):
+        raise HTTPException(400, "session_id must be a valid UUID4.")
+
 
 _state: dict[str, Any] = {"graph": None, "checkpointer_cm": None}
 _pending_confirmations: dict[str, float] = {}
@@ -121,7 +141,9 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
 
 @app.post("/chat")
 def chat(req: ChatRequest) -> StreamingResponse:
-    config = {"configurable": {"thread_id": req.session_id}}
+    _require_valid_session_id(req.session_id)
+    db_path = sessions.get_session_db_path(req.session_id)
+    config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
     # Deliberately NOT sending "query_history": [] here: LangGraph's default
     # LastValue channel semantics mean an explicit value in input always
     # overwrites the checkpointed one, even an empty list - that was silently
@@ -135,8 +157,10 @@ def chat(req: ChatRequest) -> StreamingResponse:
 
 @app.post("/confirm")
 def confirm(req: ConfirmRequest) -> StreamingResponse:
+    _require_valid_session_id(req.session_id)
     graph = _state["graph"]
-    config = {"configurable": {"thread_id": req.session_id}}
+    db_path = sessions.get_session_db_path(req.session_id)
+    config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
     current = graph.get_state(config)
     if not current.next:
         raise HTTPException(400, "No pending confirmation for this session.")
@@ -148,6 +172,17 @@ def confirm(req: ConfirmRequest) -> StreamingResponse:
     return StreamingResponse(
         _run_graph_stream(req.session_id, config, Command(resume=resume_value)), media_type="text/event-stream"
     )
+
+
+class SessionResetRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/session/reset")
+def session_reset(req: SessionResetRequest) -> dict:
+    _require_valid_session_id(req.session_id)
+    sessions.reset_session(req.session_id)
+    return {"status": "reset", "session_id": req.session_id}
 
 
 @app.get("/schema")
@@ -163,23 +198,14 @@ def health_providers() -> dict:
 _MAX_TABLE_PREVIEW_LIMIT = 200
 
 
-def _live_table_names() -> set[str]:
-    with read_only_engine.connect() as conn:
-        return {
-            row[0]
-            for row in conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-            )
-        }
-
-
 @app.get("/tables")
-def list_tables() -> dict:
+def list_tables(session_id: str | None = None) -> dict:
     """One row per table for the frontend's data browser: name, purpose, columns,
     and a live row count, so a non-technical user can see what's actually in the
     database instead of just column names and types."""
-    tables = introspect_tables()
-    with read_only_engine.connect() as conn:
+    engine = _resolve_session_engine(session_id)
+    tables = introspect_tables(engine=engine)
+    with engine.connect() as conn:
         counts = {name: conn.execute(text(f'SELECT COUNT(*) FROM "{name}"')).scalar_one() for name in tables}
     return {
         "tables": [
@@ -195,14 +221,21 @@ def list_tables() -> dict:
 
 
 @app.get("/tables/{table_name}/preview")
-def preview_table(table_name: str, limit: int = 50, offset: int = 0) -> dict:
+def preview_table(table_name: str, limit: int = 50, offset: int = 0, session_id: str | None = None) -> dict:
     """Paginated raw rows for one table, read-only. This is what the frontend's
     data browser modal renders — plain data, not an LLM-generated query."""
-    if table_name not in _live_table_names():
-        raise HTTPException(404, f"Unknown table: {table_name}")
-    limit = max(1, min(limit, _MAX_TABLE_PREVIEW_LIMIT))
-    offset = max(0, offset)
-    with read_only_engine.connect() as conn:
+    engine = _resolve_session_engine(session_id)
+    with engine.connect() as conn:
+        live_tables = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            )
+        }
+        if table_name not in live_tables:
+            raise HTTPException(404, f"Unknown table: {table_name}")
+        limit = max(1, min(limit, _MAX_TABLE_PREVIEW_LIMIT))
+        offset = max(0, offset)
         columns = [row[1] for row in conn.execute(text(f'PRAGMA table_info("{table_name}")')).fetchall()]
         rows = [
             dict(row._mapping)
