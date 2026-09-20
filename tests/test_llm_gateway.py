@@ -120,3 +120,52 @@ def test_chat_skips_a_deployment_still_in_cooldown():
         chat(alias="chat", messages=[{"role": "user", "content": "hi again"}])
     assert first.calls == 1  # never retried -- still in cooldown
     assert second.calls == 2
+
+
+from pydantic import BaseModel
+
+
+class _Choice(BaseModel):
+    intent: str
+
+
+def test_structured_chat_parses_valid_json_on_first_try():
+    from app.core.llm import structured_chat
+
+    good = FakeDeployment("ollama_cloud", ['{"intent": "analytics"}'])
+    with _patch_deployments([good]):
+        result = structured_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], schema=_Choice)
+    assert result == _Choice(intent="analytics")
+    assert good.calls == 1
+
+
+def test_structured_chat_repairs_once_on_invalid_json_then_succeeds():
+    from app.core.llm import structured_chat
+
+    deployment = FakeDeployment("ollama_cloud", ["not json at all", '{"intent": "manipulation"}'])
+    with _patch_deployments([deployment]):
+        result = structured_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], schema=_Choice)
+    assert result == _Choice(intent="manipulation")
+    assert deployment.calls == 2  # original attempt + one repair retry
+
+
+def test_structured_chat_advances_to_next_deployment_after_repair_also_fails():
+    from app.core.llm import structured_chat
+
+    bad = FakeDeployment("ollama_cloud", ["still not json", "still not json after repair"])
+    good = FakeDeployment("gemini", ['{"intent": "off_topic"}'])
+    with _patch_deployments([bad, good]):
+        result = structured_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], schema=_Choice)
+    assert result == _Choice(intent="off_topic")
+    assert bad.calls == 2  # original + repair, both invalid -- advanced without a transport-level retry
+    assert good.calls == 1
+
+
+def test_structured_chat_json_mode_deployment_injects_schema_instruction():
+    from app.core.llm import structured_chat
+
+    deployment = FakeDeployment("groq", ['{"intent": "schema_question"}'])
+    deployment.structured_mode = "json_mode"
+    with _patch_deployments([deployment]):
+        result = structured_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], schema=_Choice)
+    assert result == _Choice(intent="schema_question")

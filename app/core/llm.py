@@ -104,8 +104,39 @@ def chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0
     return _call_with_fallback(alias, lambda d: d.call(messages=messages, temperature=temperature))
 
 
+def _validate_or_repair(
+    deployment: Deployment, messages: list[dict], temperature: float, schema: type[T], format: str | dict | None
+) -> T:
+    raw = deployment.call(messages=messages, temperature=temperature, format=format)
+    try:
+        return schema.model_validate_json(raw)
+    except ValidationError as e:
+        repair_messages = messages + [
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": f"That was not valid JSON matching the required schema. Error: {e}. "
+                "Respond again with ONLY valid JSON matching the schema.",
+            },
+        ]
+        raw2 = deployment.call(messages=repair_messages, temperature=temperature, format=format)
+        try:
+            return schema.model_validate_json(raw2)
+        except ValidationError as e2:
+            raise StructuredOutputRepairFailed(deployment.provider_key, deployment.model, str(e2)) from e2
+
+
 def structured_chat(*, alias: str, messages: list[dict[str, str]], schema: type[T], temperature: float = 0.0) -> T:
-    raise NotImplementedError  # filled in by Task 9
+    def fn(deployment: Deployment) -> T:
+        if deployment.structured_mode == "native_schema":
+            return _validate_or_repair(deployment, messages, temperature, schema, format=schema.model_json_schema())
+        json_messages = messages + [
+            {"role": "system", "content": f"Respond with ONLY valid JSON matching this schema:\n{schema.model_json_schema()}"}
+        ]
+        fmt = "json" if deployment.structured_mode == "json_mode" else None
+        return _validate_or_repair(deployment, json_messages, temperature, schema, format=fmt)
+
+    return _call_with_fallback(alias, fn)
 
 
 def stream_chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
