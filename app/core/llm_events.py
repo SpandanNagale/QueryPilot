@@ -29,3 +29,26 @@ def emit_llm_attempt(**fields) -> None:
             listener(event)
         except Exception:  # noqa: BLE001 - a broken sink must never break the LLM call it's observing
             logger.exception("llm_attempt listener raised, dropping this delivery")
+
+
+# Separate listener list from llm_attempt's: a cache hit isn't an LLM attempt
+# (no provider was called), so it gets its own isolated pub/sub rather than
+# being shoehorned into the llm_attempt shape.
+_cache_hit_listeners: list[Callable[[dict], None]] = []
+
+
+def register_cache_hit_listener(fn: Callable[[dict], None]) -> None:
+    _cache_hit_listeners.append(fn)
+
+
+def clear_cache_hit_listeners() -> None:
+    _cache_hit_listeners.clear()
+
+
+def emit_cache_hit(**fields) -> None:
+    event = {"event_type": "cache_hit", **fields}
+    for listener in list(_cache_hit_listeners):
+        try:
+            listener(event)
+        except Exception:  # noqa: BLE001 - a broken sink must never break the cached call it's observing
+            logger.exception("cache_hit listener raised, dropping this delivery")

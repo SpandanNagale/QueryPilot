@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     model_groups_path: Path = PROJECT_ROOT / "config" / "model_groups.yaml"
     ollama_host: str = "http://localhost:11434"   # local Ollama: used by QP_LLM_PROFILE=local
     llm_request_timeout_seconds: int = 60
+    llm_cache_enabled: bool = True  # exact-match in-memory cache for intent_classifier/sql_generator; escape hatch, not required for normal operation
 
     # --- Schema retrieval ---
     schema_embeddings_cache_path: Path = PROJECT_ROOT / "data" / "schema_embeddings.json"

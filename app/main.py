@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,13 +24,21 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.agent.graph import build_graph
+from app.agent.nodes.intent_classifier import intent_classifier_node
+from app.agent.nodes.sql_generator import sql_generator_node
 from app.agent.prompts import get_schema_tour
 from app.config import settings
 from app.core.audit import read_events
 from app.core.db import get_engines, read_only_engine
 from app.core.errors import AppError, ErrorCode, classify_exception_to_code, classify_reason_to_code
 from app.core.llm import check_providers
-from app.core.schema_store import build_or_refresh_index, full_schema_summary, introspect_tables
+from app.core.schema_store import (
+    build_or_refresh_index,
+    format_schema_context,
+    full_schema_summary,
+    introspect_tables,
+    retrieve_relevant_tables,
+)
 from app.core import sessions
 
 logger = logging.getLogger(__name__)
@@ -78,6 +87,57 @@ NODE_EVENT_MAP: dict[str, str] = {
 }
 
 
+# frontend/index.html has no static example-prompts list of its own -- its only
+# per-turn "examples" are followup_suggester's dynamic suggestion chips, which
+# depend on the prior turn and can't seed a cache at startup. These mirror a
+# few of evals/eval_set.json's simple, schema-safe analytics questions instead
+# (same domain: cold-drinks wholesale distribution, Ratnagiri district), so
+# pre-warming has realistic keys real early traffic is likely to actually hit.
+_PREWARM_PROMPTS = (
+    "Which products are colas?",
+    "List all retailers in Dapoli",
+    "Show retailers with a credit limit above 50000",
+    "Which order ids were cancelled?",
+    "What products cost more than 50 rupees per unit?",
+)
+
+
+# Tracks which prompts this process has already run through pre-warm, so a
+# second lifespan trigger (e.g. a second `with TestClient(app)` block, or any
+# process that restarts its FastAPI app object without restarting the
+# process) doesn't repeat real provider/embedding calls for no benefit -- the
+# LLM caches themselves are keyed on more than just the prompt (schema hash,
+# context hash), so a cache lookup alone can't cheaply tell us "this exact
+# prompt was already attempted" without redoing the (real, billable) schema
+# retrieval call first.
+_prewarmed_prompts: set[str] = set()
+
+
+def _prewarm_llm_cache() -> None:
+    """Populates intent_classifier's and sql_generator's caches directly via
+    the node functions (not the full graph -- no checkpointer state is
+    touched). Guarded per-prompt so one failing provider call never blocks
+    startup, same pattern as build_or_refresh_index() above.
+
+    Called on a background thread (see lifespan below), not inline: a live
+    provider call has no bound on how slow "not-yet-failed" can be (observed
+    live: one call took 2+ minutes before the fallback chain moved on) --
+    try/except alone only guards against a raised exception, not a hang, and
+    startup must not wait minutes for a cache warm-up that's a pure
+    performance nicety.
+    """
+    for prompt in _PREWARM_PROMPTS:
+        if prompt in _prewarmed_prompts:
+            continue
+        try:
+            intent_classifier_node({"user_input": prompt, "query_history": []})
+            relevant_schema = format_schema_context(retrieve_relevant_tables(prompt))
+            sql_generator_node({"user_input": prompt, "query_history": [], "relevant_schema": relevant_schema})
+            _prewarmed_prompts.add(prompt)
+        except Exception:  # noqa: BLE001 - one bad pre-warm prompt must never block startup
+            logger.exception("LLM cache pre-warm failed for prompt %r; continuing", prompt)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +150,13 @@ async def lifespan(app: FastAPI):
         build_or_refresh_index()  # idempotent; skips re-embedding if already current
     except Exception:  # noqa: BLE001 - a down local embedding server must not crash startup
         logger.exception("Schema index build failed at startup; continuing without it")
+
+    # ponytail: fire-and-forget on a daemon thread rather than a bounded-timeout
+    # wrapper around each provider call -- simpler, and a startup-time cache
+    # warm-up that finishes late (or never, if the process exits first) is
+    # harmless; upgrade to an explicit per-call timeout if orphaned real calls
+    # ever prove wasteful (cost/log noise) in practice.
+    threading.Thread(target=_prewarm_llm_cache, name="llm-cache-prewarm", daemon=True).start()
 
     yield
 
