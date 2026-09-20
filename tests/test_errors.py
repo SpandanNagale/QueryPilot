@@ -72,6 +72,7 @@ def test_classify_exception_to_code(exc, expected):
         ("Unknown table 'foo' — it does not exist in the database.", ErrorCode.VALIDATION_BLOCKED),
         ("Blocked: rows in child_table have a CASCADE reference.", ErrorCode.FK_BLOCKED),
         ("FK constraint would be violated.", ErrorCode.FK_BLOCKED),
+        ("Guardrail blocked: Your message looks like a prompt-injection attempt.", ErrorCode.GUARDRAIL_BLOCKED),
     ],
 )
 def test_classify_reason_to_code(reason, expected):

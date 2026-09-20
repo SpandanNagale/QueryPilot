@@ -12,6 +12,11 @@ class QueryHistoryEntry(TypedDict):
     result_summary: str
 
 
+class GuardrailVerdictDict(TypedDict):
+    blocked: bool
+    reason: NotRequired[str | None]
+
+
 class AmbiguityInfo(TypedDict):
     is_ambiguous: bool
     clarifying_question: NotRequired[str]
@@ -52,6 +57,7 @@ class AgentState(TypedDict):
     messages: list[dict]                 # [{"role": "user"|"assistant", "content": str}, ...]
     query_history: list[QueryHistoryEntry]
     user_input: str
+    guardrail_verdict: NotRequired[GuardrailVerdictDict]
     intent: NotRequired[Intent]
     relevant_schema: NotRequired[str]
     generated_sql: NotRequired[str]

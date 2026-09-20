@@ -18,6 +18,7 @@ from app.agent.nodes.chart_detector import chart_detector_node
 from app.agent.nodes.confirmation_gate import confirmation_gate_node, route_after_confirmation
 from app.agent.nodes.dry_run_preview import dry_run_preview_node, route_after_dry_run_preview
 from app.agent.nodes.followup_suggester import followup_suggester_node
+from app.agent.nodes.guardrail import guardrail_node, route_after_guardrail
 from app.agent.nodes.insight_summarizer import insight_summarizer_node
 from app.agent.nodes.intent_classifier import intent_classifier_node
 from app.agent.nodes.schema_retriever import schema_retriever_node
@@ -46,6 +47,7 @@ def route_after_intent(state: AgentState) -> str:
 def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
 
+    graph.add_node("guardrail", guardrail_node)
     graph.add_node("intent_classifier", intent_classifier_node)
     graph.add_node("polite_redirect", polite_redirect_node)
     graph.add_node("schema_question_node", schema_question_node)
@@ -70,7 +72,12 @@ def build_graph(checkpointer=None):
     graph.add_node("transactional_executor", transactional_executor_node)
     graph.add_node("audit_logger", audit_logger_node)
 
-    graph.add_edge(START, "intent_classifier")
+    graph.add_edge(START, "guardrail")
+    graph.add_conditional_edges(
+        "guardrail",
+        route_after_guardrail,
+        {"blocked": "error_response", "intent_classifier": "intent_classifier"},
+    )
     graph.add_conditional_edges(
         "intent_classifier",
         route_after_intent,

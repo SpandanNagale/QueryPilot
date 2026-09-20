@@ -108,9 +108,12 @@ def classify_exception_to_code(exc: Exception) -> ErrorCode:
 def classify_reason_to_code(reason: str) -> ErrorCode:
     """Categorizes an already-curated validator/guardrail reason string (per
     Global Constraints' substring rule) -- never call this on raw exception
-    text. mentions of "row" + "ceiling"/"limit" -> ROW_CEILING_EXCEEDED;
-    "cascade"/"fk" -> FK_BLOCKED; everything else -> VALIDATION_BLOCKED."""
+    text. "guardrail" -> GUARDRAIL_BLOCKED; mentions of "row" +
+    "ceiling"/"limit" -> ROW_CEILING_EXCEEDED; "cascade"/"fk" -> FK_BLOCKED;
+    everything else -> VALIDATION_BLOCKED."""
     lowered = reason.lower()
+    if "guardrail" in lowered:
+        return ErrorCode.GUARDRAIL_BLOCKED
     if "row" in lowered and ("ceiling" in lowered or "limit" in lowered):
         return ErrorCode.ROW_CEILING_EXCEEDED
     if "cascade" in lowered or "fk" in lowered:
