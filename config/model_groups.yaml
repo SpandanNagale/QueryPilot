@@ -1,0 +1,36 @@
+# Ordered fallback chain per alias. app/core/llm_router.py reads this file;
+# node code never references a provider or model name directly, only an
+# alias ("sql_gen" or "chat"). Entries under `local:` are used only when
+# QP_LLM_PROFILE=local (offline dev against a local Ollama server).
+#
+# Models marked TO LIVE-VERIFY are the spec's suggested starting points --
+# Task 12 confirms the exact tag each provider actually serves and updates
+# this file, recording what changed in docs/phases/01-llm-gateway.md.
+
+sql_gen:
+  - provider: ollama_cloud
+    model: qwen3-coder:480b-cloud  # TO LIVE-VERIFY
+  - provider: openrouter
+    model: qwen/qwen-2.5-coder-32b-instruct:free  # TO LIVE-VERIFY
+  - provider: gemini
+    model: gemini-3.6-flash  # TO LIVE-VERIFY
+  - provider: groq
+    model: openai/gpt-oss-120b  # TO LIVE-VERIFY
+
+chat:
+  - provider: ollama_cloud
+    model: gpt-oss:120b-cloud  # TO LIVE-VERIFY
+  - provider: openrouter
+    model: meta-llama/llama-3.3-70b-instruct:free  # TO LIVE-VERIFY
+  - provider: gemini
+    model: gemini-3.6-flash  # TO LIVE-VERIFY
+  - provider: groq
+    model: openai/gpt-oss-20b  # TO LIVE-VERIFY
+
+local:
+  sql_gen:
+    - provider: ollama_local
+      model: qwen2.5-coder:14b
+  chat:
+    - provider: ollama_local
+      model: qwen3:14b
