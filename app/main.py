@@ -163,7 +163,10 @@ def confirm(req: ConfirmRequest) -> StreamingResponse:
     config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
     current = graph.get_state(config)
     if not current.next:
-        raise HTTPException(400, "No pending confirmation for this session.")
+        raise HTTPException(
+            409,
+            detail={"code": "SESSION_EXPIRED", "message": "No pending confirmation for this session. It may have expired or already been resolved."},
+        )
 
     requested_at = _pending_confirmations.pop(req.session_id, None)
     timed_out = requested_at is not None and (time.time() - requested_at) > settings.confirmation_timeout_seconds

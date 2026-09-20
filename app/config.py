@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     admin_token: str = ""  # required in the X-Admin-Token header for GET /audit's full (all-sessions) log
 
     # --- LangGraph checkpointing ---
-    checkpoint_db_path: Path = PROJECT_ROOT / "data" / "checkpoints.sqlite"
+    checkpoint_db_path: Path = Path(tempfile.gettempdir()) / "qp_checkpoints" / "checkpoints.sqlite"
 
     # --- Operational storage (audit events, budget entries) ---
     # Empty means "use a local SQLite file" -- local dev needs zero cloud setup.
