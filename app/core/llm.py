@@ -1,80 +1,112 @@
-"""Thin wrapper around the local Ollama client.
-
-Centralizes: which model gets called for which purpose, structured-output
-(JSON-schema constrained) decoding via Ollama's `format` parameter, and a
-single place that turns "Ollama is unreachable" into a clear error instead
-of a hang or a stack trace deep in a node.
+"""Provider-agnostic LLM gateway. Nodes ask for one of two aliases -- "sql_gen"
+or "chat" -- never a literal model name or provider (app/core/llm_router.py
+resolves an alias to config/model_groups.yaml's ordered deployment chain).
+Every call here falls over to the next deployment on a provider failure,
+classifying the exception via app/core/llm_errors.py and emitting an
+llm_attempt event (app/core/llm_events.py) per attempt. Mirrors the fallback
+semantics of the sibling Crewai-Research-pipeline repo's llm/router_llm.py,
+adapted to call ollama/openai/google-genai clients directly instead of
+wrapping everything in crewai.LLM.
 """
 from __future__ import annotations
 
-from typing import Any, TypeVar
+import time
+from typing import Callable, Iterator, TypeVar
 
-import ollama
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from app.config import settings
+from app.core.llm_errors import (
+    AllProvidersFailedError,
+    FallbackAction,
+    StructuredOutputRepairFailed,
+    classify_exception,
+)
+from app.core.llm_events import emit_llm_attempt
+from app.core.llm_pricing import estimate_cost
+from app.core.llm_providers import Deployment
+from app.core.llm_router import check_providers, get_deployments
 
 T = TypeVar("T", bound=BaseModel)
 
-_client = ollama.Client(host=settings.ollama_host, timeout=settings.llm_request_timeout_seconds)
+
+class LLMAlias:
+    SQL_GEN = "sql_gen"
+    CHAT = "chat"
 
 
-class OllamaUnavailableError(RuntimeError):
-    """Raised when Ollama cannot be reached at all — distinct from a model
-    producing a bad response, which callers should handle on its own terms."""
+_COOLDOWN_SECONDS = 600.0
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 1.0
+
+_cooldown_until: dict[tuple[str, int], float] = {}
 
 
-def check_ollama_available() -> tuple[bool, str]:
-    try:
-        _client.list()
-        return True, "ok"
-    except Exception as exc:  # noqa: BLE001 - we want to report any failure reason to the user
-        return False, str(exc)
+def _clear_cooldowns() -> None:
+    """Test-only: reset cooldown state between tests."""
+    _cooldown_until.clear()
 
 
-def chat(
-    *,
-    model: str,
-    messages: list[dict[str, str]],
-    temperature: float = 0.0,
-    format: str | dict | None = None,
-) -> str:
-    """Single non-streaming chat call. Returns the assistant message content."""
-    try:
-        response = _client.chat(
-            model=model,
-            messages=messages,
-            options={"temperature": temperature},
-            format=format,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} (model={model}): {exc}"
-        ) from exc
-    return response["message"]["content"]
+def _ordered_deployments(alias: str) -> list[tuple[int, Deployment]]:
+    deployments = get_deployments(alias)
+    now = time.monotonic()
+    available = [(i, d) for i, d in enumerate(deployments) if _cooldown_until.get((alias, i), 0.0) <= now]
+    return available or list(enumerate(deployments))
 
 
-def structured_chat(*, model: str, messages: list[dict[str, str]], schema: type[T], temperature: float = 0.0) -> T:
-    """Chat call constrained to a pydantic model's JSON schema via Ollama's
-    structured-output support. Guarantees the response parses."""
-    raw = chat(model=model, messages=messages, temperature=temperature, format=schema.model_json_schema())
-    return schema.model_validate_json(raw)
+def _record_attempt(alias: str, deployment: Deployment, *, latency_ms: float, success: bool, error: str = "") -> None:
+    cost = None
+    prompt_tokens = completion_tokens = None
+    if success:
+        prompt_tokens = deployment.last_usage.get("prompt_tokens")
+        completion_tokens = deployment.last_usage.get("completion_tokens")
+        cost = estimate_cost(deployment.provider_key, deployment.model, prompt_tokens, completion_tokens)
+    emit_llm_attempt(
+        alias=alias,
+        provider=deployment.provider_key,
+        model=deployment.model,
+        latency_ms=latency_ms,
+        success=success,
+        error=error,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost,
+    )
 
 
-def stream_chat(*, model: str, messages: list[dict[str, str]], temperature: float = 0.0):
-    """Yields content chunks as they arrive, for SSE streaming to the client."""
-    try:
-        stream = _client.chat(
-            model=model,
-            messages=messages,
-            options={"temperature": temperature},
-            stream=True,
-        )
-        for chunk in stream:
-            content = chunk["message"]["content"]
-            if content:
-                yield content
-    except Exception as exc:  # noqa: BLE001
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} (model={model}): {exc}"
-        ) from exc
+def _call_with_fallback(alias: str, fn: Callable[[Deployment], T]) -> T:
+    last_error: Exception | None = None
+    for index, deployment in _ordered_deployments(alias):
+        for attempt in range(2):
+            started = time.monotonic()
+            try:
+                result = fn(deployment)
+            except StructuredOutputRepairFailed as exc:
+                last_error = exc
+                _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=False, error=str(exc))
+                break  # advance to the next deployment -- no cooldown, this one isn't unhealthy
+            except Exception as exc:  # noqa: BLE001 - classified immediately below
+                action = classify_exception(exc)
+                last_error = exc
+                _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=False, error=str(exc))
+                if action is FallbackAction.NO_ADVANCE:
+                    raise
+                if action is FallbackAction.RETRY_THEN_ADVANCE and attempt == 0:
+                    time.sleep(_TRANSIENT_RETRY_BACKOFF_SECONDS)
+                    continue
+                _cooldown_until[(alias, index)] = time.monotonic() + _COOLDOWN_SECONDS
+                break
+            else:
+                _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+                return result
+    raise AllProvidersFailedError(alias, last_error)
+
+
+def chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> str:
+    return _call_with_fallback(alias, lambda d: d.call(messages=messages, temperature=temperature))
+
+
+def structured_chat(*, alias: str, messages: list[dict[str, str]], schema: type[T], temperature: float = 0.0) -> T:
+    raise NotImplementedError  # filled in by Task 9
+
+
+def stream_chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
+    raise NotImplementedError  # filled in by Task 10
