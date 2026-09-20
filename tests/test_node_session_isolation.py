@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy import text
 
-from app.agent.graph import build_graph
 from app.config import settings
 from app.core import sessions
 from app.core.db import get_engines
 
 
-def _run_delete(graph, session_id: str, db_path, sql: str):
+def _run_delete(session_id: str, db_path, sql: str):
     config = {"configurable": {"thread_id": session_id, "db_path": str(db_path)}}
     # Drive the graph directly at the transactional_executor node in
     # isolation would require constructing full AgentState by hand for every
@@ -28,9 +26,8 @@ def test_delete_in_one_session_invisible_in_another(tmp_path, monkeypatch):
     id_a, id_b = str(uuid.uuid4()), str(uuid.uuid4())
     path_a = sessions.get_session_db_path(id_a)
     path_b = sessions.get_session_db_path(id_b)
-    graph = build_graph(checkpointer=MemorySaver())
 
-    result = _run_delete(graph, id_a, path_a, "DELETE FROM orders WHERE id = 1")
+    result = _run_delete(id_a, path_a, "DELETE FROM orders WHERE id = 1")
     assert result["error"] is None
 
     ro_a, _ = get_engines(str(path_a))
