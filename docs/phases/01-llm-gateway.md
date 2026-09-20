@@ -186,11 +186,15 @@ response produces a raw `TypeError`, which isn't one of the exception types
 `FallbackAction.NO_ADVANCE` default ("fail loudly rather than silently
 cycling every deployment for an error class this gateway doesn't understand
 yet") instead of advancing to the next deployment the way a normal
-provider hiccup would. In practice this means: if `choices=None` happens on
-the *last* deployment in a chain, the caller gets an unhandled `TypeError`
-instead of `AllProvidersFailedError`. Recommend adding `TypeError` (or a
-guard on `response.choices` being falsy) to the transient/advance
-classification in a follow-up.
+provider hiccup would. In practice this means: `_call_with_fallback()`'s
+`NO_ADVANCE` branch does a bare `raise`, which aborts the whole call
+immediately, from whatever deployment it fires on -- not just when
+`choices=None` happens to hit the last deployment in the chain. Since
+OpenRouter sits at position 2 of 4 in both the `sql_gen` and `chat` chains,
+this bug can kill the entire call early, before Gemini or Groq are ever
+tried, instead of only degrading gracefully at the end of the chain.
+Recommend adding `TypeError` (or a guard on `response.choices` being falsy)
+to the transient/advance classification in a follow-up.
 
 **Ollama Cloud's `native_schema` mode did not work as designed, live,
 for either `gpt-oss` model on this account's cloud host:**
