@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # --- LangGraph checkpointing ---
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "checkpoints.sqlite"
 
+    # --- Operational storage (audit events, budget entries) ---
+    # Empty means "use a local SQLite file" -- local dev needs zero cloud setup.
+    database_url: str = ""
+
+    @property
+    def resolved_database_url(self) -> str:
+        return self.database_url or f"sqlite:///{PROJECT_ROOT / 'data' / 'operational.db'}"
+
 
 settings = Settings()
 
