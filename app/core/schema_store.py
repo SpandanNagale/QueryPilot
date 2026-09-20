@@ -1,28 +1,31 @@
-"""Schema retrieval via ChromaDB.
+"""Schema retrieval via Gemini embeddings + numpy cosine similarity.
 
-Each table's description (name, purpose, columns, sample values) is
-embedded once and persisted; a user request retrieves only the top-k most
-relevant tables instead of the full schema being dumped into every prompt.
-
-Embeddings come from Ollama (nomic-embed-text), not ChromaDB's bundled
-default embedder — the latter downloads a model from Hugging Face at
-runtime, which would violate "fully local, no external API calls" the
-moment this ran on a machine without that model cached.
+Each table's description (name, purpose, columns) is embedded once via
+Gemini's embedding API and cached to disk, keyed by a hash of the document
+text so a schema/description change invalidates just that table's cached
+vector. A user request embeds the query text at request time and ranks
+tables by cosine similarity - no vector database, no ONNX runtime, no
+background telemetry client: at 6 tables, a linear numpy scan is simply
+faster to build and run than standing up a real vector index.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from dataclasses import dataclass, field
 
-import chromadb
-import ollama
-from chromadb import Documents, EmbeddingFunction, Embeddings
+import numpy as np
+from google import genai
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.config import settings
+from app.config import provider_credentials, settings
 from app.core.db import read_only_engine
 
-_embedding_client = ollama.Client(host=settings.ollama_host, timeout=settings.llm_request_timeout_seconds)
+logger = logging.getLogger(__name__)
+
+_embedding_client = genai.Client(api_key=provider_credentials.gemini_api_key)
 
 # Static business-purpose descriptions. Column names/types and sample rows
 # are appended live from the database, so this only needs to say *why* a
@@ -80,30 +83,6 @@ class TableInfo:
         return f"{self.name}: {self.purpose} Columns: {col_names}."
 
 
-class OllamaEmbeddingFunction(EmbeddingFunction):
-    def __call__(self, input: Documents) -> Embeddings:
-        response = _embedding_client.embed(model=settings.embed_model, input=list(input))
-        return response["embeddings"]
-
-
-_COLLECTION_NAME = "querypilot_schema"
-_client: chromadb.ClientAPI | None = None
-_collection: chromadb.Collection | None = None
-
-
-def _get_client() -> chromadb.ClientAPI:
-    global _client
-    if _client is None:
-        settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
-        # anonymized_telemetry=False: this system is fully local by design,
-        # chromadb's default telemetry would otherwise attempt outbound calls.
-        _client = chromadb.PersistentClient(
-            path=str(settings.chroma_persist_dir),
-            settings=chromadb.Settings(anonymized_telemetry=False),
-        )
-    return _client
-
-
 def introspect_tables(
     table_names: list[str] | None = None, engine: Engine = read_only_engine
 ) -> dict[str, TableInfo]:
@@ -157,51 +136,93 @@ def introspect_tables(
     return tables
 
 
-def build_or_refresh_index(force: bool = False) -> int:
-    """(Re)embeds every table description into the persistent Chroma
-    collection. Idempotent and cheap to call at startup: skipped if the
-    collection already has one entry per live table, unless force=True."""
-    global _collection
-
-    tables = introspect_tables()
-    client = _get_client()
-    collection = client.get_or_create_collection(
-        name=_COLLECTION_NAME, embedding_function=OllamaEmbeddingFunction()
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    result = _embedding_client.models.embed_content(
+        model=settings.embedding_model,
+        contents=texts,
+        config={"output_dimensionality": settings.embedding_dimensions},
     )
-
-    if not force and collection.count() == len(tables):
-        existing_ids = set(collection.get()["ids"])
-        if existing_ids == set(tables.keys()):
-            _collection = collection
-            return 0
-
-    ids = list(tables.keys())
-    documents = [tables[name].as_embedding_document() for name in ids]
-    collection.upsert(ids=ids, documents=documents)
-
-    _collection = collection
-    return len(ids)
+    return [list(e.values) for e in result.embeddings]
 
 
-def _get_collection() -> chromadb.Collection:
-    global _collection
-    if _collection is None:
-        build_or_refresh_index()
-    return _collection
+def _doc_hash(document: str) -> str:
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _load_cache() -> dict[str, dict]:
+    if not settings.schema_embeddings_cache_path.exists():
+        return {}
+    try:
+        return json.loads(settings.schema_embeddings_cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_cache(cache: dict[str, dict]) -> None:
+    settings.schema_embeddings_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.schema_embeddings_cache_path.write_text(json.dumps(cache), encoding="utf-8")
+
+
+def build_or_refresh_index(force: bool = False) -> int:
+    """(Re)embeds every table description whose cached hash doesn't match its
+    current as_embedding_document() text. Idempotent and cheap to call at
+    startup: with a warm cache and no schema changes, this makes zero
+    embedding calls."""
+    tables = introspect_tables()
+    cache = {} if force else _load_cache()
+
+    to_embed: list[str] = []
+    to_embed_names: list[str] = []
+    for name, table in tables.items():
+        document = table.as_embedding_document()
+        digest = _doc_hash(document)
+        if cache.get(name, {}).get("hash") != digest:
+            to_embed.append(document)
+            to_embed_names.append(name)
+
+    if to_embed:
+        vectors = _embed_texts(to_embed)
+        for name, document, vector in zip(to_embed_names, to_embed, vectors):
+            cache[name] = {"hash": _doc_hash(document), "vector": vector}
+
+    # Drop cache entries for tables that no longer exist.
+    for stale_name in list(cache.keys()):
+        if stale_name not in tables:
+            del cache[stale_name]
+
+    _save_cache(cache)
+    return len(to_embed)
 
 
 def retrieve_relevant_tables(nl_query: str, top_k: int | None = None) -> list[TableInfo]:
-    """Top-k most relevant tables for a natural-language request, each
-    carrying live columns + sample rows for prompt injection."""
+    """Top-k most relevant tables for a natural-language request, ranked by
+    cosine similarity against the cached per-table embeddings. Falls back to
+    every table (full schema) on any embedding failure - with 6 tables the
+    full schema is small enough that this degradation is nearly free, and
+    correctness matters far more than an optimally-targeted prompt."""
     top_k = settings.schema_retrieval_top_k if top_k is None else top_k
-    collection = _get_collection()
-    top_k = min(top_k, collection.count())
+    tables = introspect_tables()
 
-    results = collection.query(query_texts=[nl_query], n_results=top_k)
-    retrieved_names = results["ids"][0]
+    try:
+        cache = _load_cache()
+        missing = [name for name in tables if name not in cache]
+        if missing:
+            build_or_refresh_index()
+            cache = _load_cache()
 
-    tables = introspect_tables(table_names=retrieved_names)
-    return [tables[name] for name in retrieved_names if name in tables]
+        query_vector = np.array(_embed_texts([nl_query])[0])
+        names = list(tables.keys())
+        matrix = np.array([cache[name]["vector"] for name in names])
+        query_norm = query_vector / np.linalg.norm(query_vector)
+        matrix_norm = matrix / np.linalg.norm(matrix, axis=1, keepdims=True)
+        scores = matrix_norm @ query_norm
+
+        ranked = [name for _, name in sorted(zip(scores, names), reverse=True)]
+        top_names = ranked[:top_k]
+        return [tables[name] for name in top_names]
+    except Exception:  # noqa: BLE001 - any embedding/cache failure degrades to the full schema, never fails the request
+        logger.warning("Schema embedding retrieval failed; falling back to full schema.", exc_info=True)
+        return list(tables.values())
 
 
 def format_schema_context(tables: list[TableInfo]) -> str:

@@ -35,12 +35,13 @@ class Settings(BaseSettings):
     # --- LLM gateway ---
     llm_profile: str = "cloud"   # "cloud" (default, deployed chain) or "local" (dev-only, forces ollama_local)
     model_groups_path: Path = PROJECT_ROOT / "config" / "model_groups.yaml"
-    ollama_host: str = "http://localhost:11434"   # local Ollama: used by QP_LLM_PROFILE=local and by schema embeddings
-    embed_model: str = "nomic-embed-text"
+    ollama_host: str = "http://localhost:11434"   # local Ollama: used by QP_LLM_PROFILE=local
     llm_request_timeout_seconds: int = 60
 
     # --- Schema retrieval ---
-    chroma_persist_dir: Path = PROJECT_ROOT / "data" / "chroma"
+    schema_embeddings_cache_path: Path = PROJECT_ROOT / "data" / "schema_embeddings.json"
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimensions: int = 768
     schema_retrieval_top_k: int = 3
     sample_rows_per_table: int = 3
 
