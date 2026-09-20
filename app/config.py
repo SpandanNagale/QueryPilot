@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     schema_retrieval_top_k: int = 3
     sample_rows_per_table: int = 3
 
-    # --- Logging ---
-    audit_log_path: Path = PROJECT_ROOT / "logs" / "audit.jsonl"
+    # --- Audit access control ---
+    admin_token: str = ""  # required in the X-Admin-Token header for GET /audit's full (all-sessions) log
 
     # --- LangGraph checkpointing ---
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "checkpoints.sqlite"

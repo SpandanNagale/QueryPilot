@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Generator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -249,8 +249,13 @@ def preview_table(table_name: str, limit: int = 50, offset: int = 0, session_id:
 
 
 @app.get("/audit")
-def audit(limit: int = 50, offset: int = 0) -> dict:
-    return {"events": read_events(limit=limit, offset=offset)}
+def audit(limit: int = 50, offset: int = 0, session_id: str | None = None, x_admin_token: str | None = Header(None)) -> dict:
+    if x_admin_token is not None and settings.admin_token and x_admin_token == settings.admin_token:
+        return {"events": read_events(limit=limit, offset=offset)}  # full log, every session
+    if session_id is None:
+        raise HTTPException(400, "session_id is required (or provide a valid X-Admin-Token for the full log).")
+    _require_valid_session_id(session_id)
+    return {"events": read_events(limit=limit, offset=offset, session_id=session_id)}
 
 
 @app.get("/health")
