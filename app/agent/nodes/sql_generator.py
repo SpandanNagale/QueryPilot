@@ -8,8 +8,7 @@ import re
 
 from app.agent.prompts import build_sql_generation_messages
 from app.agent.state import AgentState
-from app.config import settings
-from app.core.llm import chat
+from app.core.llm import LLMAlias, chat
 
 _FENCE_RE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
@@ -28,7 +27,7 @@ def generate_sql_raw(
     prior_error: str | None = None,
 ) -> str:
     messages = build_sql_generation_messages(user_input, relevant_schema, history or [], prior_error)
-    raw = chat(model=settings.sql_gen_model, messages=messages, temperature=0.0)
+    raw = chat(alias=LLMAlias.SQL_GEN, messages=messages, temperature=0.0)
     return _clean_sql(raw)
 
 

@@ -5,8 +5,7 @@ from langgraph.config import get_stream_writer
 from app.agent.nodes.result_formatting import rows_to_markdown
 from app.agent.prompts import build_insight_summary_messages
 from app.agent.state import AgentState
-from app.config import settings
-from app.core.llm import stream_chat
+from app.core.llm import LLMAlias, stream_chat
 
 
 def insight_summarizer_node(state: AgentState) -> dict:
@@ -16,7 +15,7 @@ def insight_summarizer_node(state: AgentState) -> dict:
     writer = get_stream_writer()
     chunks: list[str] = []
     for token in stream_chat(
-        model=settings.chat_model,
+        alias=LLMAlias.CHAT,
         messages=build_insight_summary_messages(state["user_input"], state["generated_sql"], markdown),
         temperature=0.2,
     ):

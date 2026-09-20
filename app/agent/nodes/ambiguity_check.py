@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from app.agent.prompts import AmbiguityCheck, build_ambiguity_check_messages
 from app.agent.state import AgentState
-from app.config import settings
-from app.core.llm import structured_chat
+from app.core.llm import LLMAlias, structured_chat
 
 
 def ambiguity_check_node(state: AgentState) -> dict:
     result = structured_chat(
-        model=settings.chat_model,
+        alias=LLMAlias.CHAT,
         messages=build_ambiguity_check_messages(
             state["user_input"],
             state["generated_sql"],

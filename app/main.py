@@ -6,6 +6,7 @@ session_id (== thread_id), so a session survives an API process restart.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,8 +26,10 @@ from app.agent.prompts import get_schema_tour
 from app.config import settings
 from app.core.audit import read_events
 from app.core.db import read_only_engine
-from app.core.llm import check_ollama_available
+from app.core.llm import check_providers
 from app.core.schema_store import build_or_refresh_index, full_schema_summary, introspect_tables
+
+logger = logging.getLogger(__name__)
 
 _state: dict[str, Any] = {"graph": None, "checkpointer_cm": None}
 _pending_confirmations: dict[str, float] = {}
@@ -61,9 +64,10 @@ async def lifespan(app: FastAPI):
     _state["checkpointer_cm"] = checkpointer_cm
     _state["graph"] = build_graph(checkpointer=checkpointer)
 
-    ollama_ok, _ = check_ollama_available()
-    if ollama_ok:
+    try:
         build_or_refresh_index()  # idempotent; skips re-embedding if already current
+    except Exception:  # noqa: BLE001 - a down local embedding server must not crash startup
+        logger.exception("Schema index build failed at startup; continuing without it")
 
     yield
 
@@ -151,6 +155,11 @@ def schema() -> dict:
     return {"schema": full_schema_summary(), "tour": get_schema_tour()}
 
 
+@app.get("/health/providers")
+def health_providers() -> dict:
+    return check_providers()
+
+
 _MAX_TABLE_PREVIEW_LIMIT = 200
 
 
@@ -213,7 +222,6 @@ def audit(limit: int = 50, offset: int = 0) -> dict:
 
 @app.get("/health")
 def health() -> dict:
-    ollama_ok, ollama_msg = check_ollama_available()
     try:
         with read_only_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -222,8 +230,7 @@ def health() -> dict:
         db_ok, db_msg = False, str(exc)
 
     return {
-        "healthy": ollama_ok and db_ok,
-        "ollama": {"available": ollama_ok, "detail": ollama_msg},
+        "healthy": db_ok,
         "database": {"available": db_ok, "detail": db_msg},
         "read_only_mode": settings.read_only_mode,
     }

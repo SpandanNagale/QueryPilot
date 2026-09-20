@@ -14,12 +14,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import chromadb
+import ollama
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from sqlalchemy import text
 
 from app.config import settings
 from app.core.db import read_only_engine
-from app.core.llm import _client as ollama_client  # reuse the single configured Ollama client
+
+_embedding_client = ollama.Client(host=settings.ollama_host, timeout=settings.llm_request_timeout_seconds)
 
 # Static business-purpose descriptions. Column names/types and sample rows
 # are appended live from the database, so this only needs to say *why* a
@@ -79,7 +81,7 @@ class TableInfo:
 
 class OllamaEmbeddingFunction(EmbeddingFunction):
     def __call__(self, input: Documents) -> Embeddings:
-        response = ollama_client.embed(model=settings.embed_model, input=list(input))
+        response = _embedding_client.embed(model=settings.embed_model, input=list(input))
         return response["embeddings"]
 
 
