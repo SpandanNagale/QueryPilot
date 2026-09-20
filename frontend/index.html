@@ -468,7 +468,7 @@ async function streamRequest(url, body, botDiv) {
       } else if (event === "error") {
         botDiv.classList.add("error");
         const existing = getResponseText(botDiv).textContent;
-        setResponseText(botDiv, (existing ? existing + "\n" : "") + "Error: " + data.error);
+        setResponseText(botDiv, (existing ? existing + "\n" : "") + "Error: " + data.message);
       } else if (event === "done") {
         // no-op: stream finished
       }
