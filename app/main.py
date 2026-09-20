@@ -95,7 +95,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="QueryPilot", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+_cors_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=bool(_cors_origins),  # never combine "*" with credentials; an empty list keeps this False too
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ChatRequest(BaseModel):

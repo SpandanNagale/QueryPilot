@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # Empty means "use a local SQLite file" -- local dev needs zero cloud setup.
     database_url: str = ""
 
+    # --- CORS ---
+    cors_allowed_origins: str = ""  # comma-separated; empty means no cross-origin requests are allowed
+
     @property
     def resolved_database_url(self) -> str:
         return self.database_url or f"sqlite:///{PROJECT_ROOT / 'data' / 'operational.db'}"
