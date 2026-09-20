@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 from google import genai
@@ -25,7 +26,15 @@ from app.core.db import read_only_engine
 
 logger = logging.getLogger(__name__)
 
-_embedding_client = genai.Client(api_key=provider_credentials.gemini_api_key)
+
+@lru_cache(maxsize=1)
+def _get_embedding_client() -> genai.Client:
+    """Built lazily on first real use, not at import time - importing this
+    module (or app.main) with no GEMINI_API_KEY set must not raise, so that
+    QP_LLM_PROFILE=local (zero-cloud-setup dev) still works and the
+    degrade-to-full-schema path in retrieve_relevant_tables actually gets a
+    chance to run instead of failing before its own try/except."""
+    return genai.Client(api_key=provider_credentials.gemini_api_key)
 
 # Static business-purpose descriptions. Column names/types and sample rows
 # are appended live from the database, so this only needs to say *why* a
@@ -137,7 +146,7 @@ def introspect_tables(
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    result = _embedding_client.models.embed_content(
+    result = _get_embedding_client().models.embed_content(
         model=settings.embedding_model,
         contents=texts,
         config={"output_dimensionality": settings.embedding_dimensions},

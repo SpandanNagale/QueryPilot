@@ -60,6 +60,12 @@ read_only_engine, read_write_engine = get_engines(str(settings.template_db_path)
 
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+    """Registered on the Engine *class*, so it fires for every engine in the
+    process - including app/core/opdb.py's Postgres engine in production.
+    Must no-op for anything that isn't an actual sqlite3 connection, or a
+    Postgres connection gets handed a raw SQLite PRAGMA statement."""
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()

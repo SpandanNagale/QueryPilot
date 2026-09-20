@@ -60,7 +60,13 @@ class Settings(BaseSettings):
 
     @property
     def resolved_database_url(self) -> str:
-        return self.database_url or f"sqlite:///{PROJECT_ROOT / 'data' / 'operational.db'}"
+        # SQLAlchemy 2.0 maps bare "postgresql://" to the psycopg2 dialect,
+        # but requirements.txt installs psycopg (v3) -- Neon's dashboard
+        # hands out exactly the bare "postgresql://" format, so without this
+        # rewrite create_engine() (and thus `alembic upgrade head`, the
+        # Docker CMD's first step) crashes on a real Neon URL.
+        url = self.database_url or f"sqlite:///{PROJECT_ROOT / 'data' / 'operational.db'}"
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 
 settings = Settings()

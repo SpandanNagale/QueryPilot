@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import text
 
 from app.config import settings
-from app.core.db import get_engines
+from app.core.db import _set_sqlite_pragma, get_engines
 
 
 def test_get_engines_is_cached_per_path(tmp_path):
@@ -44,3 +44,25 @@ def test_read_only_engine_from_get_engines_still_refuses_writes(tmp_path):
     with ro.connect() as conn:
         with pytest.raises(Exception):
             conn.execute(text("DELETE FROM orders WHERE id = 1"))
+
+
+def test_sqlite_pragma_listener_noops_for_non_sqlite3_connection():
+    """_set_sqlite_pragma is registered on the SQLAlchemy Engine *class*, so
+    it fires for every engine in the process, including app/core/opdb.py's
+    Postgres engine in production. A non-sqlite3 DBAPI connection (e.g. a
+    psycopg connection) must be ignored, not handed a SQLite-only PRAGMA
+    statement that would raise a Postgres syntax error."""
+
+    class _FakeCursor:
+        def execute(self, *a, **kw):
+            raise AssertionError("PRAGMA should never be executed against a non-sqlite3 connection")
+
+        def close(self):
+            pass
+
+    class _FakeNonSqliteConnection:  # stands in for e.g. a psycopg connection
+        def cursor(self):
+            raise AssertionError("cursor() should never be called for a non-sqlite3 connection")
+
+    # Should not raise, and must not touch the fake connection at all.
+    _set_sqlite_pragma(_FakeNonSqliteConnection(), None)

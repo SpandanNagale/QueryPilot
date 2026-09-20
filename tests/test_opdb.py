@@ -33,8 +33,26 @@ def test_resolved_database_url_falls_back_to_local_sqlite(monkeypatch):
     assert settings.resolved_database_url.startswith("sqlite:///")
 
 
-def test_resolved_database_url_uses_configured_value(monkeypatch):
+def test_resolved_database_url_normalizes_bare_postgresql_scheme_to_psycopg3(monkeypatch):
+    """Neon hands out bare postgresql:// URLs, but SQLAlchemy 2.0 maps that
+    scheme to psycopg2, which isn't installed (requirements.txt installs
+    psycopg[binary], i.e. psycopg3). Must be rewritten or create_engine()
+    crashes at import time."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "database_url", "postgresql://user:pass@host/db")
-    assert settings.resolved_database_url == "postgresql://user:pass@host/db"
+    assert settings.resolved_database_url == "postgresql+psycopg://user:pass@host/db"
+
+
+def test_resolved_database_url_leaves_already_correct_dialect_unchanged(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "database_url", "postgresql+psycopg://user:pass@host/db")
+    assert settings.resolved_database_url == "postgresql+psycopg://user:pass@host/db"
+
+
+def test_resolved_database_url_leaves_sqlite_unchanged(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "database_url", "sqlite:///some/path.db")
+    assert settings.resolved_database_url == "sqlite:///some/path.db"
