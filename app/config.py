@@ -5,6 +5,7 @@ rest of the app should hardcode a model name, file path, or safety limit.
 """
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,7 +17,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="QP_", extra="ignore")
 
     # --- Database ---
-    database_path: Path = PROJECT_ROOT / "data" / "querypilot.db"
+    template_db_path: Path = PROJECT_ROOT / "data" / "template.db"
+
+    # --- Per-session sandbox ---
+    session_dir: Path = Path(tempfile.gettempdir()) / "qp_sessions"
+    session_ttl_minutes: int = 30
+    max_sessions: int = 200
 
     # --- Safety / guardrails ---
     read_only_mode: bool = False          # when true, manipulation path is fully disabled
@@ -43,14 +49,6 @@ class Settings(BaseSettings):
 
     # --- LangGraph checkpointing ---
     checkpoint_db_path: Path = PROJECT_ROOT / "data" / "checkpoints.sqlite"
-
-    @property
-    def read_write_uri(self) -> str:
-        return f"file:{self.database_path}"
-
-    @property
-    def read_only_uri(self) -> str:
-        return f"file:{self.database_path}?mode=ro"
 
 
 settings = Settings()

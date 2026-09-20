@@ -288,14 +288,14 @@ def seed_inventory(rng: random.Random, products: list[dict]) -> list[dict]:
 
 
 def main(force: bool) -> None:
-    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if settings.database_path.exists():
+    settings.template_db_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.template_db_path.exists():
         if not force:
-            print(f"{settings.database_path} already exists. Re-seeding (drop + recreate).")
-        settings.database_path.unlink()
+            print(f"{settings.template_db_path} already exists. Use --force to drop and recreate. Skipping.")
+            return
+        settings.template_db_path.unlink()
 
-    conn = sqlite3.connect(settings.database_path)
+    conn = sqlite3.connect(settings.template_db_path)
     conn.executescript(DDL)
 
     rng = random.Random(SEED)
@@ -331,7 +331,7 @@ def main(force: bool) -> None:
         )
         conn.execute("PRAGMA journal_mode=WAL")
 
-    print(f"Seeded {settings.database_path}")
+    print(f"Seeded {settings.template_db_path}")
     print(f"  products:     {len(products)}")
     print(f"  retailers:    {len(retailers)}")
     print(f"  orders:       {len(orders)}")

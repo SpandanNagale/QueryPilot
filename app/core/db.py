@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
@@ -24,17 +26,36 @@ from sqlalchemy.pool import NullPool
 from app.config import settings
 
 
-def _rw_creator() -> sqlite3.Connection:
-    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(settings.read_write_uri, uri=True, check_same_thread=False)
+def _rw_uri(db_path: str) -> str:
+    return f"file:{db_path}"
 
 
-def _ro_creator() -> sqlite3.Connection:
-    return sqlite3.connect(settings.read_only_uri, uri=True, check_same_thread=False)
+def _ro_uri(db_path: str) -> str:
+    return f"file:{db_path}?mode=ro"
 
 
-read_write_engine = create_engine("sqlite://", creator=_rw_creator, poolclass=NullPool, future=True)
-read_only_engine = create_engine("sqlite://", creator=_ro_creator, poolclass=NullPool, future=True)
+@lru_cache(maxsize=256)
+def get_engines(db_path: str) -> tuple[Engine, Engine]:
+    """One (read_only, read_write) engine pair per distinct SQLite file path,
+    cached for the process lifetime. Every session's sandbox copy gets its
+    own pair the first time it's requested; the template's pair is built the
+    same way, through the same cache, so there's exactly one code path for
+    "give me the engines for this file" regardless of which file it is."""
+    db_path = str(db_path)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def _rw_creator() -> sqlite3.Connection:
+        return sqlite3.connect(_rw_uri(db_path), uri=True, check_same_thread=False)
+
+    def _ro_creator() -> sqlite3.Connection:
+        return sqlite3.connect(_ro_uri(db_path), uri=True, check_same_thread=False)
+
+    rw = create_engine("sqlite://", creator=_rw_creator, poolclass=NullPool, future=True)
+    ro = create_engine("sqlite://", creator=_ro_creator, poolclass=NullPool, future=True)
+    return ro, rw
+
+
+read_only_engine, read_write_engine = get_engines(str(settings.template_db_path))
 
 
 @event.listens_for(Engine, "connect")
