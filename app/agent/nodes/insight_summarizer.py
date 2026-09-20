@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from app.agent.nodes.result_formatting import rows_to_markdown
 from app.agent.prompts import build_insight_summary_messages
 from app.agent.state import AgentState
-from app.core.llm import LLMAlias, stream_chat
+from app.core.llm import LLMAlias, byok_from_config, stream_chat
 
 
-def insight_summarizer_node(state: AgentState) -> dict:
+def insight_summarizer_node(state: AgentState, config: RunnableConfig) -> dict:
     exec_result = state["execution_result"]
     markdown = rows_to_markdown(exec_result["columns"], exec_result["rows"])
+    byok = byok_from_config(config)
 
     writer = get_stream_writer()
     chunks: list[str] = []
@@ -18,6 +20,7 @@ def insight_summarizer_node(state: AgentState) -> dict:
         alias=LLMAlias.CHAT,
         messages=build_insight_summary_messages(state["user_input"], state["generated_sql"], markdown),
         temperature=0.2,
+        byok=byok,
     ):
         chunks.append(token)
         writer({"token": token})

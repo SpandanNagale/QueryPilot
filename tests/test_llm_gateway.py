@@ -219,3 +219,130 @@ def test_stream_chat_raises_all_providers_failed_when_every_deployment_errors():
     ):
         with pytest.raises(AllProvidersFailedError):
             list(stream_chat(alias="chat", messages=[{"role": "user", "content": "hi"}]))
+
+
+# ---------------------------------------------------------------------------
+# BYOK: byok=... bypasses _ordered_deployments/fallback entirely and calls a
+# single ad-hoc Deployment built via app.core.llm_providers.build_deployment.
+# ---------------------------------------------------------------------------
+
+_BYOK_SECRET = "sk-byok-secret-should-never-be-logged"
+
+
+def _patch_byok_deployment(monkeypatch, deployment):
+    """_byok_deployment looks up the configured model for byok["provider"]
+    via get_deployments(alias), then builds a fresh Deployment via
+    build_deployment -- patch both so the test never touches a real
+    provider client, and can assert api_key_override was forwarded."""
+    monkeypatch.setattr("app.core.llm.get_deployments", lambda alias: [deployment])
+    captured = {}
+
+    def fake_build_deployment(provider_key, model, *, api_key_override=None):
+        captured["provider_key"] = provider_key
+        captured["model"] = model
+        captured["api_key_override"] = api_key_override
+        return deployment
+
+    monkeypatch.setattr("app.core.llm.build_deployment", fake_build_deployment)
+    return captured
+
+
+def test_chat_byok_bypasses_fallback_and_uses_the_override_key(monkeypatch):
+    from app.core.llm import chat
+
+    deployment = FakeDeployment("gemini", ["byok response"])
+    captured = _patch_byok_deployment(monkeypatch, deployment)
+
+    result = chat(
+        alias="chat",
+        messages=[{"role": "user", "content": "hi"}],
+        byok={"provider": "gemini", "api_key": _BYOK_SECRET},
+    )
+
+    assert result == "byok response"
+    assert captured["provider_key"] == "gemini"
+    assert captured["api_key_override"] == _BYOK_SECRET
+
+
+def test_chat_byok_never_calls_ordered_deployments(monkeypatch):
+    """The brief is explicit: BYOK bypasses _ordered_deployments/fallback
+    entirely -- not just "falls through to it and it happens to work"."""
+    from app.core.llm import chat
+
+    deployment = FakeDeployment("gemini", ["byok response"])
+    _patch_byok_deployment(monkeypatch, deployment)
+
+    def _boom(alias):
+        raise AssertionError("_ordered_deployments must not be called for a BYOK request")
+
+    monkeypatch.setattr("app.core.llm._ordered_deployments", _boom)
+
+    chat(alias="chat", messages=[{"role": "user", "content": "hi"}], byok={"provider": "gemini", "api_key": "k"})
+
+
+def test_structured_chat_byok_uses_override_key():
+    from app.core.llm import structured_chat
+
+    with patch("app.core.llm.get_deployments", return_value=[FakeDeployment("gemini", [])]):
+        captured = {}
+
+        def fake_build_deployment(provider_key, model, *, api_key_override=None):
+            captured["api_key_override"] = api_key_override
+            return FakeDeployment("gemini", ['{"intent": "analytics"}'])
+
+        with patch("app.core.llm.build_deployment", fake_build_deployment):
+            result = structured_chat(
+                alias="chat",
+                messages=[{"role": "user", "content": "hi"}],
+                schema=_Choice,
+                byok={"provider": "gemini", "api_key": _BYOK_SECRET},
+            )
+    assert result == _Choice(intent="analytics")
+    assert captured["api_key_override"] == _BYOK_SECRET
+
+
+def test_stream_chat_byok_yields_chunks_from_the_override_deployment(monkeypatch):
+    from app.core.llm import stream_chat
+
+    deployment = FakeStreamingDeployment("gemini", [["by", "ok"]])
+    _patch_byok_deployment(monkeypatch, deployment)
+
+    chunks = list(
+        stream_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], byok={"provider": "gemini", "api_key": "k"})
+    )
+    assert chunks == ["by", "ok"]
+
+
+def test_byok_missing_provider_in_alias_chain_raises_config_error(monkeypatch):
+    from app.core.llm import chat
+    from app.core.llm_errors import LLMConfigError
+
+    monkeypatch.setattr("app.core.llm.get_deployments", lambda alias: [FakeDeployment("groq", [])])
+    with pytest.raises(LLMConfigError):
+        chat(alias="chat", messages=[{"role": "user", "content": "hi"}], byok={"provider": "gemini", "api_key": "k"})
+
+
+def test_byok_key_never_appears_in_emitted_llm_attempt_event(monkeypatch):
+    """Never write the BYOK key into an llm_attempt event -- register a
+    listener and inspect every field of every event it receives."""
+    from app.core import llm_events
+    from app.core.llm import chat
+
+    deployment = FakeDeployment("gemini", ["byok response"])
+    _patch_byok_deployment(monkeypatch, deployment)
+
+    received = []
+    llm_events.register_llm_attempt_listener(received.append)
+    try:
+        chat(
+            alias="chat",
+            messages=[{"role": "user", "content": "hi"}],
+            byok={"provider": "gemini", "api_key": _BYOK_SECRET},
+        )
+    finally:
+        llm_events.clear_llm_attempt_listeners()
+
+    assert len(received) == 1
+    import json
+
+    assert _BYOK_SECRET not in json.dumps(received[0], default=str)

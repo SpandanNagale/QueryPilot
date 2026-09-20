@@ -172,3 +172,55 @@ def test_build_deployment_dispatches_to_the_right_builder(monkeypatch):
 def test_build_deployment_rejects_unknown_provider():
     with pytest.raises(LLMConfigError):
         build_deployment("not_a_real_provider", "some-model")
+
+
+# ---------------------------------------------------------------------------
+# BYOK: api_key_override threaded through build_deployment -> each builder.
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_cloud_api_key_override_takes_precedence_over_configured_credential(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "ollama_api_key", "shared-key")
+    with patch("app.core.llm_providers.ollama.Client") as MockClient:
+        build_ollama_cloud("gpt-oss:120b-cloud", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["headers"] == {"Authorization": "Bearer byok-key"}
+
+
+def test_ollama_cloud_falls_back_to_configured_credential_when_no_override(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "ollama_api_key", "shared-key")
+    with patch("app.core.llm_providers.ollama.Client") as MockClient:
+        build_ollama_cloud("gpt-oss:120b-cloud", api_key_override=None)
+        assert MockClient.call_args.kwargs["headers"] == {"Authorization": "Bearer shared-key"}
+
+
+def test_openrouter_api_key_override_takes_precedence(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "openrouter_api_key", "shared-key")
+    with patch("app.core.llm_providers.openai.OpenAI") as MockClient:
+        build_openrouter("some/free-model", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["api_key"] == "byok-key"
+
+
+def test_groq_api_key_override_takes_precedence(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "groq_api_key", "shared-key")
+    with patch("app.core.llm_providers.openai.OpenAI") as MockClient:
+        build_groq("openai/gpt-oss-20b", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["api_key"] == "byok-key"
+
+
+def test_gemini_api_key_override_takes_precedence(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "gemini_api_key", "shared-key")
+    with patch("app.core.llm_providers.genai.Client") as MockClient:
+        build_gemini("gemini-3.6-flash", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["api_key"] == "byok-key"
+
+
+def test_ollama_local_ignores_api_key_override_since_it_has_no_credential_concept():
+    with patch("app.core.llm_providers.ollama.Client") as MockClient:
+        build_ollama_local("qwen3:14b", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["headers"] == {}  # no Authorization header at all
+
+
+def test_build_deployment_threads_api_key_override_through(monkeypatch):
+    with patch("app.core.llm_providers.genai.Client") as MockClient:
+        build_deployment("gemini", "gemini-3.6-flash", api_key_override="byok-key")
+        assert MockClient.call_args.kwargs["api_key"] == "byok-key"

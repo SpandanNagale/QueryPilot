@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     confirmation_timeout_seconds: int = 60
     guardrail_max_input_chars: int = 2000 # input guardrail: reject raw user messages longer than this
     rate_limit_per_minute: int = 10       # per-IP sliding-window cap on /chat and /confirm requests
+    daily_budget_usd: float = 0.0         # kill-switch: block /chat once today's (UTC) LLM spend hits this; 0.0 = no cap
 
     # --- LLM gateway ---
     llm_profile: str = "cloud"   # "cloud" (default, deployed chain) or "local" (dev-only, forces ollama_local)

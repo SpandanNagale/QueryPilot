@@ -32,7 +32,9 @@ from app.core.audit import read_events
 from app.core.db import get_engines, read_only_engine
 from app.core.errors import AppError, ErrorCode, classify_exception_to_code, classify_reason_to_code
 from app.core.llm import check_providers
+from app.core.llm_events import register_llm_attempt_listener
 from app.core.rate_limit import check_rate_limit
+from app.core.request_context import set_session_id
 from app.core.schema_store import (
     build_or_refresh_index,
     format_schema_context,
@@ -40,7 +42,7 @@ from app.core.schema_store import (
     introspect_tables,
     retrieve_relevant_tables,
 )
-from app.core import sessions
+from app.core import budget, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +176,8 @@ async def lifespan(app: FastAPI):
     # ever prove wasteful (cost/log noise) in practice.
     threading.Thread(target=_prewarm_llm_cache, name="llm-cache-prewarm", daemon=True).start()
 
+    register_llm_attempt_listener(budget.record_llm_attempt)
+
     yield
 
     checkpointer_cm.__exit__(None, None, None)
@@ -193,6 +197,25 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    # BYOK: when both are present, this one request routes through the
+    # caller's own provider+key (app.core.llm._byok_deployment) and bypasses
+    # the daily budget cap below. Never logged/persisted -- see
+    # _byok_override and app/core/llm.py's _call_byok/_record_attempt.
+    byok_provider: str | None = None
+    byok_api_key: str | None = None
+
+
+def _byok_override(req: ChatRequest) -> dict | None:
+    if req.byok_provider and req.byok_api_key:
+        return {"provider": req.byok_provider, "api_key": req.byok_api_key}
+    return None
+
+
+def _require_budget_ok(byok: dict | None) -> None:
+    if byok is not None or settings.daily_budget_usd <= 0.0:
+        return
+    if budget.today_spend_usd() >= settings.daily_budget_usd:
+        raise HTTPException(503, detail=_error_detail(ErrorCode.BUDGET_EXCEEDED))
 
 
 class ConfirmRequest(BaseModel):
@@ -213,7 +236,32 @@ def _error_detail(code: ErrorCode) -> dict:
 def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[str, None, None]:
     graph = _state["graph"]
     try:
-        for mode, chunk in graph.stream(graph_input, config, stream_mode=["updates", "custom"]):
+        stream_iter = graph.stream(graph_input, config, stream_mode=["updates", "custom"])
+        while True:
+            # Re-armed on every resumption of this generator, not set once
+            # up front, because of how Starlette drives a sync
+            # StreamingResponse body: iterate_in_threadpool dispatches each
+            # next() call through anyio.to_thread.run_sync, which copies a
+            # FRESH snapshot of the ambient (never-mutated) request context
+            # on every single dispatch -- verified empirically, including
+            # that resetting a Token minted in one such copy from inside
+            # another raises `ValueError: Token ... was created in a
+            # different Context`. A ContextVar.set() before this loop would
+            # only be visible for the very first chunk; every later node's
+            # LLM call (in a later next(stream_iter), i.e. a later dispatch)
+            # would see the var back at its default. Setting it immediately
+            # before each next(stream_iter) call keeps it visible in the
+            # exact dispatch that runs the node -- which is where
+            # app/core/budget.py's llm_attempt listener needs to read it
+            # from. Plain set(), no token/reset: each HTTP request already
+            # runs in its own isolated asyncio Task, so nothing leaks across
+            # requests without one.
+            set_session_id(session_id)
+            try:
+                mode, chunk = next(stream_iter)
+            except StopIteration:
+                break
+
             if mode == "custom":
                 yield _sse("token", chunk)
                 continue
@@ -245,8 +293,12 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
 def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     _require_rate_limit_ok(request)
     _require_valid_session_id(req.session_id)
+    byok = _byok_override(req)
+    _require_budget_ok(byok)
     db_path = sessions.get_session_db_path(req.session_id)
     config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
+    if byok is not None:
+        config["configurable"]["byok"] = byok
     # Deliberately NOT sending "query_history": [] here: LangGraph's default
     # LastValue channel semantics mean an explicit value in input always
     # overwrites the checkpointed one, even an empty list - that was silently
@@ -297,6 +349,14 @@ def schema() -> dict:
 @app.get("/health/providers")
 def health_providers() -> dict:
     return check_providers()
+
+
+@app.get("/health/budget")
+def health_budget() -> dict:
+    spent = budget.today_spend_usd()
+    cap = settings.daily_budget_usd
+    exceeded = cap > 0.0 and spent >= cap
+    return {"spent": spent, "cap": cap, "exceeded": exceeded}
 
 
 _MAX_TABLE_PREVIEW_LIMIT = 200

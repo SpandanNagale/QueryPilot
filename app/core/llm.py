@@ -18,12 +18,13 @@ from pydantic import BaseModel, ValidationError
 from app.core.llm_errors import (
     AllProvidersFailedError,
     FallbackAction,
+    LLMConfigError,
     StructuredOutputRepairFailed,
     classify_exception,
 )
 from app.core.llm_events import emit_llm_attempt
 from app.core.llm_pricing import estimate_cost
-from app.core.llm_providers import Deployment
+from app.core.llm_providers import Deployment, build_deployment
 from app.core.llm_router import check_providers, get_deployments
 
 T = TypeVar("T", bound=BaseModel)
@@ -72,6 +73,44 @@ def _record_attempt(alias: str, deployment: Deployment, *, latency_ms: float, su
     )
 
 
+def byok_from_config(config: dict | None) -> dict | None:
+    """Reads config["configurable"]["byok"] safely. config is optional on
+    intent_classifier_node/sql_generator_node -- the startup cache pre-warm
+    thread and existing tests call them with state only, no config."""
+    if not config:
+        return None
+    return config.get("configurable", {}).get("byok")
+
+
+def _byok_deployment(alias: str, byok: dict) -> Deployment:
+    """One ad-hoc Deployment for a BYOK-covered call: reuses the model
+    already configured for this alias+provider in config/model_groups.yaml
+    (so BYOK swaps only the credential, not which model gets called), built
+    fresh with the caller's own key via api_key_override -- never touches
+    provider_credentials or the shared fallback chain's cached Deployments."""
+    provider = byok["provider"]
+    model = next((d.model for d in get_deployments(alias) if d.provider_key == provider), None)
+    if model is None:
+        raise LLMConfigError(f"BYOK provider {provider!r} is not configured for alias={alias!r}.")
+    return build_deployment(provider, model, api_key_override=byok["api_key"])
+
+
+def _call_byok(alias: str, byok: dict, fn: Callable[[Deployment], T]) -> T:
+    """Single attempt against the caller's own key -- no fallback, no
+    cooldown bookkeeping (this deployment isn't part of the shared chain).
+    Still records an llm_attempt event (provider/model/cost only -- never
+    the key) so budget/audit tooling sees the attempt like any other."""
+    deployment = _byok_deployment(alias, byok)
+    started = time.monotonic()
+    try:
+        result = fn(deployment)
+    except Exception as exc:  # noqa: BLE001 - recorded, then re-raised for the caller to classify
+        _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=False, error=str(exc))
+        raise
+    _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+    return result
+
+
 def _call_with_fallback(alias: str, fn: Callable[[Deployment], T]) -> T:
     last_error: Exception | None = None
     for index, deployment in _ordered_deployments(alias):
@@ -100,8 +139,11 @@ def _call_with_fallback(alias: str, fn: Callable[[Deployment], T]) -> T:
     raise AllProvidersFailedError(alias, last_error)
 
 
-def chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> str:
-    return _call_with_fallback(alias, lambda d: d.call(messages=messages, temperature=temperature))
+def chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0, byok: dict | None = None) -> str:
+    fn = lambda d: d.call(messages=messages, temperature=temperature)  # noqa: E731
+    if byok is not None:
+        return _call_byok(alias, byok, fn)
+    return _call_with_fallback(alias, fn)
 
 
 def _validate_or_repair(
@@ -126,7 +168,9 @@ def _validate_or_repair(
             raise StructuredOutputRepairFailed(deployment.provider_key, deployment.model, str(e2)) from e2
 
 
-def structured_chat(*, alias: str, messages: list[dict[str, str]], schema: type[T], temperature: float = 0.0) -> T:
+def structured_chat(
+    *, alias: str, messages: list[dict[str, str]], schema: type[T], temperature: float = 0.0, byok: dict | None = None
+) -> T:
     def fn(deployment: Deployment) -> T:
         if deployment.structured_mode == "native_schema":
             return _validate_or_repair(deployment, messages, temperature, schema, format=schema.model_json_schema())
@@ -136,10 +180,31 @@ def structured_chat(*, alias: str, messages: list[dict[str, str]], schema: type[
         fmt = "json" if deployment.structured_mode == "json_mode" else None
         return _validate_or_repair(deployment, json_messages, temperature, schema, format=fmt)
 
+    if byok is not None:
+        return _call_byok(alias, byok, fn)
     return _call_with_fallback(alias, fn)
 
 
-def stream_chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
+def stream_chat(
+    *, alias: str, messages: list[dict[str, str]], temperature: float = 0.0, byok: dict | None = None
+) -> Iterator[str]:
+    if byok is not None:
+        deployment = _byok_deployment(alias, byok)
+        started = time.monotonic()
+        try:
+            stream = deployment.stream(messages=messages, temperature=temperature)
+            first_chunk = next(stream)
+        except StopIteration:
+            _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+            return
+        except Exception as exc:  # noqa: BLE001 - recorded, then re-raised (no fallback for BYOK)
+            _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=False, error=str(exc))
+            raise
+        _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+        yield first_chunk
+        yield from stream
+        return
+
     last_error: Exception | None = None
     for index, deployment in _ordered_deployments(alias):
         started = time.monotonic()

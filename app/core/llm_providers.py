@@ -72,12 +72,13 @@ def _build_ollama(provider_key: str, model: str, host: str, headers: dict) -> De
     return Deployment(provider_key=provider_key, model=model, structured_mode="native_schema", _call=_call, _stream=_stream)
 
 
-def build_ollama_local(model: str) -> Deployment:
+def build_ollama_local(model: str, *, api_key_override: str | None = None) -> Deployment:
+    # ollama_local has no API key concept (plain local host) -- override is a no-op.
     return _build_ollama("ollama_local", model, settings.ollama_host, headers={})
 
 
-def build_ollama_cloud(model: str) -> Deployment:
-    key = provider_credentials.ollama_api_key
+def build_ollama_cloud(model: str, *, api_key_override: str | None = None) -> Deployment:
+    key = api_key_override or provider_credentials.ollama_api_key
     if not key:
         raise LLMConfigError(
             "provider=ollama_cloud requires OLLAMA_API_KEY to be set "
@@ -116,8 +117,8 @@ def _build_openai_compatible(provider_key: str, model: str, base_url: str, api_k
     return Deployment(provider_key=provider_key, model=model, structured_mode="json_mode", _call=_call, _stream=_stream)
 
 
-def build_openrouter(model: str) -> Deployment:
-    key = provider_credentials.openrouter_api_key
+def build_openrouter(model: str, *, api_key_override: str | None = None) -> Deployment:
+    key = api_key_override or provider_credentials.openrouter_api_key
     if not key:
         raise LLMConfigError(
             "provider=openrouter requires OPENROUTER_API_KEY to be set (get one at https://openrouter.ai/keys)."
@@ -125,8 +126,8 @@ def build_openrouter(model: str) -> Deployment:
     return _build_openai_compatible("openrouter", model, provider_credentials.openrouter_base_url, key)
 
 
-def build_groq(model: str) -> Deployment:
-    key = provider_credentials.groq_api_key
+def build_groq(model: str, *, api_key_override: str | None = None) -> Deployment:
+    key = api_key_override or provider_credentials.groq_api_key
     if not key:
         raise LLMConfigError(
             "provider=groq requires GROQ_API_KEY to be set (get one at https://console.groq.com/keys)."
@@ -161,8 +162,8 @@ def _messages_to_gemini(messages: list[dict]) -> tuple[str | None, list]:
     return system_instruction, contents
 
 
-def build_gemini(model: str) -> Deployment:
-    key = provider_credentials.gemini_api_key
+def build_gemini(model: str, *, api_key_override: str | None = None) -> Deployment:
+    key = api_key_override or provider_credentials.gemini_api_key
     if not key:
         raise LLMConfigError(
             "provider=gemini requires GEMINI_API_KEY to be set (get one at https://aistudio.google.com/apikey)."
@@ -190,7 +191,7 @@ def build_gemini(model: str) -> Deployment:
     return Deployment(provider_key="gemini", model=model, structured_mode="native_schema", _call=_call, _stream=_stream)
 
 
-PROVIDER_BUILDERS: dict[str, Callable[[str], Deployment]] = {
+PROVIDER_BUILDERS: dict[str, Callable[..., Deployment]] = {
     "ollama_local": build_ollama_local,
     "ollama_cloud": build_ollama_cloud,
     "openrouter": build_openrouter,
@@ -199,8 +200,8 @@ PROVIDER_BUILDERS: dict[str, Callable[[str], Deployment]] = {
 }
 
 
-def build_deployment(provider_key: str, model: str) -> Deployment:
+def build_deployment(provider_key: str, model: str, *, api_key_override: str | None = None) -> Deployment:
     builder = PROVIDER_BUILDERS.get(provider_key)
     if builder is None:
         raise LLMConfigError(f"Unknown provider {provider_key!r}. Supported: {', '.join(PROVIDER_BUILDERS)}")
-    return builder(model)
+    return builder(model, api_key_override=api_key_override)

@@ -200,6 +200,65 @@ def test_cache_hit_of_invalid_sql_is_still_blocked_by_validate_sql():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# BYOK bypasses the cache entirely (miss AND store) -- see
+# app/agent/nodes/intent_classifier.py and sql_generator.py's decision
+# comment: the caller's own key must answer a BYOK-covered request, not a
+# cached answer the shared budget's key produced (and a BYOK response must
+# never get stored where a later non-BYOK request could hit it for free).
+# ---------------------------------------------------------------------------
+
+
+def _byok_config() -> dict:
+    return {"configurable": {"byok": {"provider": "gemini", "api_key": "byok-key"}}}
+
+
+def test_intent_classifier_byok_always_calls_structured_chat_even_when_cached():
+    with patch("app.agent.nodes.intent_classifier.structured_chat") as mock_chat:
+        mock_chat.return_value = Mock(intent="analytics")
+
+        state = {"user_input": "How many orders are pending?", "query_history": []}
+        intent_classifier_node(state)  # populates the (non-BYOK) cache
+        intent_classifier_node(state, _byok_config())  # BYOK -- must not hit that cache
+
+    assert mock_chat.call_count == 2
+    assert mock_chat.call_args.kwargs["byok"] == {"provider": "gemini", "api_key": "byok-key"}
+
+
+def test_intent_classifier_byok_response_is_never_stored_in_the_cache():
+    with patch("app.agent.nodes.intent_classifier.structured_chat") as mock_chat:
+        mock_chat.return_value = Mock(intent="analytics")
+        state = {"user_input": "How many orders are pending?", "query_history": []}
+
+        intent_classifier_node(state, _byok_config())  # BYOK -- must not populate the cache
+        intent_classifier_node(state)  # non-BYOK -- must still be a cache miss
+
+    assert mock_chat.call_count == 2
+
+
+def test_sql_generator_byok_always_calls_chat_even_when_cached():
+    with patch("app.agent.nodes.sql_generator.chat") as mock_chat:
+        mock_chat.return_value = "SELECT name FROM products;"
+        state = {"user_input": "Which products are colas?", "relevant_schema": "products(name, category)", "query_history": []}
+
+        sql_generator_node(state)  # populates the (non-BYOK) cache
+        sql_generator_node(state, _byok_config())  # BYOK -- must not hit that cache
+
+    assert mock_chat.call_count == 2
+    assert mock_chat.call_args.kwargs["byok"] == {"provider": "gemini", "api_key": "byok-key"}
+
+
+def test_sql_generator_byok_response_is_never_stored_in_the_cache():
+    with patch("app.agent.nodes.sql_generator.chat") as mock_chat:
+        mock_chat.return_value = "SELECT name FROM products;"
+        state = {"user_input": "Which products are colas?", "relevant_schema": "products(name, category)", "query_history": []}
+
+        sql_generator_node(state, _byok_config())  # BYOK -- must not populate the cache
+        sql_generator_node(state)  # non-BYOK -- must still be a cache miss
+
+    assert mock_chat.call_count == 2
+
+
 def test_insight_summarizer_source_has_no_cache_wiring():
     import inspect
 

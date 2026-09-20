@@ -15,7 +15,13 @@ _listeners: list[Callable[[dict], None]] = []
 
 
 def register_llm_attempt_listener(fn: Callable[[dict], None]) -> None:
-    _listeners.append(fn)
+    # Idempotent: app/main.py's lifespan calls this on every startup, and
+    # tests routinely enter `with TestClient(app) as client:` (triggering
+    # lifespan) more than once per process -- without the dedupe, the same
+    # listener would be appended again each time and fire multiple times
+    # per event.
+    if fn not in _listeners:
+        _listeners.append(fn)
 
 
 def clear_llm_attempt_listeners() -> None:
