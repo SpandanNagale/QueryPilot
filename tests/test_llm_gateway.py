@@ -169,3 +169,53 @@ def test_structured_chat_json_mode_deployment_injects_schema_instruction():
     with _patch_deployments([deployment]):
         result = structured_chat(alias="chat", messages=[{"role": "user", "content": "hi"}], schema=_Choice)
     assert result == _Choice(intent="schema_question")
+
+
+class FakeStreamingDeployment(FakeDeployment):
+    def __init__(self, provider_key, stream_script):
+        """stream_script: list of either a list-of-chunks (success) or an
+        Exception raised on the first next() call."""
+        super().__init__(provider_key, [])
+        self._stream_script = list(stream_script)
+
+    def stream(self, *, messages, temperature):
+        step = self._stream_script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return iter(step)
+
+
+def test_stream_chat_yields_all_chunks_from_the_first_working_deployment():
+    from app.core.llm import stream_chat
+
+    good = FakeStreamingDeployment("groq", [["he", "llo"]])
+    with _patch_deployments([good]):
+        chunks = list(stream_chat(alias="chat", messages=[{"role": "user", "content": "hi"}]))
+    assert chunks == ["he", "llo"]
+
+
+def test_stream_chat_falls_back_before_the_first_token():
+    from app.core.llm import stream_chat
+
+    class FakeConnErr(Exception):
+        pass
+
+    broken = FakeStreamingDeployment("groq", [FakeConnErr("connection refused")])
+    good = FakeStreamingDeployment("gemini", [["from", " second"]])
+    with _patch_deployments([broken, good]), patch(
+        "app.core.llm.classify_exception", return_value=FallbackAction.ADVANCE_IMMEDIATELY
+    ):
+        chunks = list(stream_chat(alias="chat", messages=[{"role": "user", "content": "hi"}]))
+    assert chunks == ["from", " second"]
+
+
+def test_stream_chat_raises_all_providers_failed_when_every_deployment_errors():
+    from app.core.llm import stream_chat
+
+    first = FakeStreamingDeployment("groq", [Exception("down")])
+    second = FakeStreamingDeployment("gemini", [Exception("also down")])
+    with _patch_deployments([first, second]), patch(
+        "app.core.llm.classify_exception", return_value=FallbackAction.ADVANCE_IMMEDIATELY
+    ):
+        with pytest.raises(AllProvidersFailedError):
+            list(stream_chat(alias="chat", messages=[{"role": "user", "content": "hi"}]))

@@ -140,4 +140,25 @@ def structured_chat(*, alias: str, messages: list[dict[str, str]], schema: type[
 
 
 def stream_chat(*, alias: str, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
-    raise NotImplementedError  # filled in by Task 10
+    last_error: Exception | None = None
+    for index, deployment in _ordered_deployments(alias):
+        started = time.monotonic()
+        try:
+            stream = deployment.stream(messages=messages, temperature=temperature)
+            first_chunk = next(stream)
+        except StopIteration:
+            _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+            return
+        except Exception as exc:  # noqa: BLE001
+            action = classify_exception(exc)
+            last_error = exc
+            _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=False, error=str(exc))
+            if action is FallbackAction.NO_ADVANCE:
+                raise
+            _cooldown_until[(alias, index)] = time.monotonic() + _COOLDOWN_SECONDS
+            continue
+        _record_attempt(alias, deployment, latency_ms=(time.monotonic() - started) * 1000, success=True)
+        yield first_chunk
+        yield from stream
+        return
+    raise AllProvidersFailedError(alias, last_error)
