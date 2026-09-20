@@ -5,19 +5,19 @@ fallback action. See app/core/llm_errors.py for what each action means."""
 from __future__ import annotations
 
 import httpx
-import httpx
+import httpx2
 import openai
 import pytest
 
 from app.core.llm_errors import FallbackAction, classify_exception
 
 
-def _request() -> httpx.Request:
-    return httpx.Request("POST", "https://example.com")
+def _request() -> httpx2.Request:
+    return httpx2.Request("POST", "https://example.com")
 
 
 def _api_status_error(status_code: int) -> openai.APIStatusError:
-    response = httpx.Response(status_code, request=_request(), json={"error": {"message": "boom"}})
+    response = httpx2.Response(status_code, request=_request(), json={"error": {"message": "boom"}})
     return openai.APIStatusError("boom", response=response, body=None)
 
 
@@ -35,7 +35,7 @@ def test_transient_errors_retry_then_advance(exc):
 
 
 def test_openai_internal_server_error_is_transient():
-    response = httpx.Response(500, request=_request(), json={"error": {"message": "boom"}})
+    response = httpx2.Response(500, request=_request(), json={"error": {"message": "boom"}})
     exc = openai.InternalServerError("boom", response=response, body=None)
     assert classify_exception(exc) is FallbackAction.RETRY_THEN_ADVANCE
 
@@ -50,7 +50,7 @@ def test_openai_internal_server_error_is_transient():
     ],
 )
 def test_named_openai_exceptions_advance_immediately(exc_cls, status):
-    response = httpx.Response(status, request=_request(), json={"error": {"message": "boom"}})
+    response = httpx2.Response(status, request=_request(), json={"error": {"message": "boom"}})
     exc = exc_cls("boom", response=response, body=None)
     assert classify_exception(exc) is FallbackAction.ADVANCE_IMMEDIATELY
 
