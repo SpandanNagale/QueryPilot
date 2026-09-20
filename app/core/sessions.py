@@ -28,7 +28,13 @@ def is_valid_session_id(session_id: str) -> bool:
         parsed = uuid.UUID(session_id)
     except (ValueError, AttributeError, TypeError):
         return False
-    return parsed.version == 4 and str(parsed) == session_id.lower()
+    # Exact canonical-lowercase match, not normalized against session_id.lower():
+    # an upper-case UUID string used to pass this check but then get used
+    # as-is (not lowercased) for the actual filename, so "AAAA..." and
+    # "aaaa..." could become two different session files for the same
+    # logical UUID. Only the canonical lowercase form uuid.uuid4() actually
+    # produces is accepted.
+    return parsed.version == 4 and str(parsed) == session_id
 
 
 def _session_path(session_id: str) -> Path:
@@ -56,18 +62,35 @@ def reset_session(session_id: str) -> Path:
     return get_session_db_path(session_id)
 
 
+def _safe_mtime(path: Path) -> float | None:
+    """FastAPI runs sync endpoints in a threadpool, so two concurrent
+    requests' sweeps can race: one thread's unlink() can remove a file
+    between another thread's glob() and its later stat() call. Treat a
+    file that's already gone as "skip it" instead of letting a bare
+    FileNotFoundError/OSError propagate as a 500 to an unrelated request."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 def sweep_expired_sessions() -> int:
     if not settings.session_dir.exists():
         return 0
 
     now = time.time()
     ttl_seconds = settings.session_ttl_minutes * 60
-    files = sorted(settings.session_dir.glob("*.db"), key=lambda p: p.stat().st_mtime)
+    candidates = [(p, _safe_mtime(p)) for p in settings.session_dir.glob("*.db")]
+    files = [p for p, mtime in sorted(candidates, key=lambda pm: (pm[1] is None, pm[1])) if mtime is not None]
 
     removed = 0
     survivors = []
     for f in files:
-        if now - f.stat().st_mtime > ttl_seconds:
+        mtime = _safe_mtime(f)
+        if mtime is None:
+            removed += 1  # already gone (raced away by another sweep) - count it, don't error
+            continue
+        if now - mtime > ttl_seconds:
             f.unlink(missing_ok=True)
             removed += 1
         else:

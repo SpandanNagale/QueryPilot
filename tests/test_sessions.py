@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 
 from sqlalchemy import text
 
@@ -21,6 +22,17 @@ def test_valid_uuid4_accepted():
 def test_traversal_and_malformed_ids_rejected():
     for bad in ["../../etc/passwd", "not-a-uuid", "", "12345", str(uuid.uuid1())]:
         assert not sessions.is_valid_session_id(bad)
+
+
+def test_uppercase_uuid4_rejected_not_silently_normalized():
+    """An upper-case UUID string is a different filename from its lowercase
+    canonical form once used verbatim in _session_path(); accepting it while
+    only lowercasing for comparison (not for the filename) let "AAAA..." and
+    "aaaa..." address two different session files for the same logical UUID.
+    Only the exact canonical lowercase form is valid."""
+    canonical = str(uuid.uuid4())
+    assert sessions.is_valid_session_id(canonical)
+    assert not sessions.is_valid_session_id(canonical.upper())
 
 
 def test_first_access_copies_template(tmp_path, monkeypatch):
@@ -84,6 +96,44 @@ def test_sweep_removes_idle_sessions_past_ttl(tmp_path, monkeypatch):
     removed = sessions.sweep_expired_sessions()
     assert removed == 1
     assert not path.exists()
+
+
+def test_sweep_survives_file_deleted_mid_scan(tmp_path, monkeypatch):
+    """Simulates the concurrent-request race: another thread's sweep unlinks
+    a file between this sweep's glob() and a later stat() call on it. Before
+    the fix, the second stat() would raise FileNotFoundError and propagate
+    as an unhandled 500 to an unrelated request."""
+    import os
+
+    monkeypatch.setattr(settings, "session_dir", tmp_path)
+    monkeypatch.setattr(settings, "session_ttl_minutes", 0)  # anything untouched expires immediately
+    id_a, id_b = _new_id(), _new_id()
+    path_a = sessions.get_session_db_path(id_a)
+    path_b = sessions.get_session_db_path(id_b)
+    old_time = time.time() - 3600
+    os.utime(path_a, (old_time, old_time))
+    os.utime(path_b, (old_time, old_time))
+
+    real_stat = Path.stat
+    call_count = {"n": 0}
+
+    def _flaky_stat(self, *a, **kw):
+        # Let every earlier stat() call through untouched; on path_a's SECOND
+        # stat() (the one inside the removal loop), pretend another thread
+        # already unlinked it - the exact race the fix guards against.
+        if self == path_a:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                path_a.unlink(missing_ok=True)
+                raise FileNotFoundError(f"[simulated race] {self}")
+        return real_stat(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "stat", _flaky_stat)
+
+    removed = sessions.sweep_expired_sessions()  # must not raise
+    assert removed == 2  # both counted as removed: path_b unlinked normally, path_a already gone
+    assert not path_a.exists()
+    assert not path_b.exists()
 
 
 def test_sweep_evicts_oldest_when_over_max_sessions(tmp_path, monkeypatch):

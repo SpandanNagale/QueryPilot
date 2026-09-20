@@ -23,6 +23,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.agent.graph import build_graph
+from app.config import settings
 from app.core.db import read_only_engine
 
 EVAL_SET_PATH = Path(__file__).parent / "eval_set.json"
@@ -73,7 +74,10 @@ def _scalar(rows: list[dict]) -> int:
 
 def run_case(graph, case: dict) -> dict:
     thread_id = f"eval-{case['id']}"
-    config = {"configurable": {"thread_id": thread_id}}
+    # validator_node and other Part-A nodes subscript config["configurable"]["db_path"]
+    # directly - evals run against the template database, same as before session
+    # sandboxing existed.
+    config = {"configurable": {"thread_id": thread_id, "db_path": str(settings.template_db_path)}}
     started = time.time()
     result = {"id": case["id"], "category": case["category"], "passed": False, "detail": ""}
 
