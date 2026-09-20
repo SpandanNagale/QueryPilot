@@ -14,6 +14,7 @@ def test_chat_rejects_non_uuid4_session_id(tmp_path, monkeypatch):
     with TestClient(app) as client:
         response = client.post("/chat", json={"session_id": "../../etc/passwd", "message": "hi"})
     assert response.status_code == 400
+    assert response.json()["detail"] == {"code": "SESSION_INVALID", "message": "session_id must be a valid UUID4."}
 
 
 def test_session_reset_rejects_non_uuid4():
@@ -22,6 +23,7 @@ def test_session_reset_rejects_non_uuid4():
     with TestClient(app) as client:
         response = client.post("/session/reset", json={"session_id": "not-a-uuid"})
     assert response.status_code == 400
+    assert response.json()["detail"] == {"code": "SESSION_INVALID", "message": "session_id must be a valid UUID4."}
 
 
 def test_tables_endpoint_falls_back_to_template_with_no_session_id():

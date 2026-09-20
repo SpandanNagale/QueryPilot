@@ -27,6 +27,7 @@ from app.agent.prompts import get_schema_tour
 from app.config import settings
 from app.core.audit import read_events
 from app.core.db import get_engines, read_only_engine
+from app.core.errors import AppError, ErrorCode, classify_exception_to_code, classify_reason_to_code
 from app.core.llm import check_providers
 from app.core.schema_store import build_or_refresh_index, full_schema_summary, introspect_tables
 from app.core import sessions
@@ -41,7 +42,7 @@ def _resolve_session_engine(session_id: str | None):
     if session_id is None:
         return read_only_engine
     if not sessions.is_valid_session_id(session_id):
-        raise HTTPException(400, "session_id must be a valid UUID4.")
+        raise HTTPException(400, detail=_error_detail(ErrorCode.SESSION_INVALID))
     db_path = sessions.get_session_db_path(session_id)
     ro, _ = get_engines(str(db_path))
     return ro
@@ -49,7 +50,7 @@ def _resolve_session_engine(session_id: str | None):
 
 def _require_valid_session_id(session_id: str) -> None:
     if not sessions.is_valid_session_id(session_id):
-        raise HTTPException(400, "session_id must be a valid UUID4.")
+        raise HTTPException(400, detail=_error_detail(ErrorCode.SESSION_INVALID))
 
 
 _state: dict[str, Any] = {"graph": None, "checkpointer_cm": None}
@@ -120,6 +121,12 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+def _error_detail(code: ErrorCode) -> dict:
+    """HTTPException `detail` shape: {code, message} -- same two keys
+    `/confirm`'s pre-existing 409 used, sourced from the error catalog."""
+    return {"code": code.value, "message": AppError(code).message}
+
+
 def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[str, None, None]:
     graph = _state["graph"]
     try:
@@ -136,13 +143,17 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
                     continue
 
                 if partial and partial.get("error"):
-                    yield _sse("error", {"node": node_name, "error": partial["error"]})
+                    reason = partial["error"]
+                    code = classify_reason_to_code(reason)
+                    yield _sse("error", {"code": code.value, "message": reason, "node": node_name})
 
                 event_name = NODE_EVENT_MAP.get(node_name)
                 if event_name and partial:
                     yield _sse(event_name, partial)
     except Exception as exc:  # noqa: BLE001 - surface to the client instead of a bare 500 mid-stream
-        yield _sse("error", {"node": "server", "error": str(exc)})
+        logger.exception("Unhandled exception in graph stream (session_id=%s)", session_id)
+        code = classify_exception_to_code(exc)
+        yield _sse("error", AppError(code, detail=str(exc), node="server").to_dict())
     finally:
         yield _sse("done", {})
 
@@ -171,10 +182,7 @@ def confirm(req: ConfirmRequest) -> StreamingResponse:
     config = {"configurable": {"thread_id": req.session_id, "db_path": str(db_path)}}
     current = graph.get_state(config)
     if not current.next:
-        raise HTTPException(
-            409,
-            detail={"code": "SESSION_EXPIRED", "message": "No pending confirmation for this session. It may have expired or already been resolved."},
-        )
+        raise HTTPException(409, detail=_error_detail(ErrorCode.SESSION_EXPIRED))
 
     requested_at = _pending_confirmations.pop(req.session_id, None)
     timed_out = requested_at is not None and (time.time() - requested_at) > settings.confirmation_timeout_seconds
@@ -272,17 +280,21 @@ def audit(limit: int = 50, offset: int = 0, session_id: str | None = None, x_adm
 @app.get("/health")
 def health() -> dict:
     try:
-        with read_only_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        db_ok, db_msg = True, "ok"
-    except Exception as exc:  # noqa: BLE001
-        db_ok, db_msg = False, str(exc)
+        try:
+            with read_only_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_ok, db_msg = True, "ok"
+        except Exception as exc:  # noqa: BLE001 - a down DB is a reported, not raised, health condition
+            db_ok, db_msg = False, str(exc)
 
-    return {
-        "healthy": db_ok,
-        "database": {"available": db_ok, "detail": db_msg},
-        "read_only_mode": settings.read_only_mode,
-    }
+        return {
+            "healthy": db_ok,
+            "database": {"available": db_ok, "detail": db_msg},
+            "read_only_mode": settings.read_only_mode,
+        }
+    except Exception as exc:  # noqa: BLE001 - /health must never leak a traceback via FastAPI's default 500 handler
+        logger.exception("Unhandled failure building /health response")
+        return {"healthy": False, **_error_detail(ErrorCode.INTERNAL)}
 
 
 if FRONTEND_DIR.exists():
