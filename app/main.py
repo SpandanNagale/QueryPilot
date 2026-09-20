@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,9 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_session_engine(session_id: str | None):
-    """Session-aware read-only engine for GET endpoints: the template if no
-    session_id is given, or the session doesn't exist yet; that session's
-    own sandbox engine otherwise."""
+    """Session-aware read-only engine for GET endpoints: returns the template
+    engine when no session_id is given; otherwise provisions (if needed) and
+    returns that session's own sandbox engine."""
     if session_id is None:
         return read_only_engine
     if not sessions.is_valid_session_id(session_id):
@@ -260,7 +261,7 @@ def preview_table(table_name: str, limit: int = 50, offset: int = 0, session_id:
 
 @app.get("/audit")
 def audit(limit: int = 50, offset: int = 0, session_id: str | None = None, x_admin_token: str | None = Header(None)) -> dict:
-    if x_admin_token is not None and settings.admin_token and x_admin_token == settings.admin_token:
+    if x_admin_token is not None and settings.admin_token and secrets.compare_digest(x_admin_token, settings.admin_token):
         return {"events": read_events(limit=limit, offset=offset)}  # full log, every session
     if session_id is None:
         raise HTTPException(400, "session_id is required (or provide a valid X-Admin-Token for the full log).")

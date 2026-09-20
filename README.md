@@ -30,7 +30,6 @@ pip install -r requirements.txt
 
 ollama pull qwen2.5-coder:14b
 ollama pull qwen3:14b
-ollama pull nomic-embed-text
 
 python -m scripts.seed_db
 uvicorn app.main:app --reload
@@ -102,11 +101,12 @@ version:
   surgery), so the preview's `WHERE` is guaranteed identical to what would
   execute.
 - **Schema retrieval is embedding-based**, not a full-schema dump per
-  prompt: table descriptions are embedded with Ollama (`nomic-embed-text`,
-  not ChromaDB's bundled downloader — kept everything local), and the
-  top-k relevant tables are retrieved per request, including live sample
-  rows and explicit enum-value lists for low-cardinality columns (this
-  turned out to matter a lot — see Evals below).
+  prompt: table descriptions are embedded with Gemini's
+  `gemini-embedding-001` and cached to a JSON file keyed by content hash —
+  no vector database — and the top-k relevant tables are retrieved per
+  request, including live sample rows and explicit enum-value lists for
+  low-cardinality columns (this turned out to matter a lot — see Evals
+  below).
 - **Confirmation is a real LangGraph interrupt**, not a fake two-step flow:
   the graph pauses via `interrupt()`, state is checkpointed to SQLite
   (`langgraph-checkpoint-sqlite`), and the API's `/confirm` endpoint
@@ -176,9 +176,11 @@ querypilot/
    the connection itself is incapable of writing.
 8. `EXPLAIN` pre-flight before every real execution.
 9. Transactions: `BEGIN` → execute → `COMMIT`, `ROLLBACK` on any error.
-10. Every manipulation request logged to `logs/audit.jsonl`: timestamp,
-    input, SQL, validation outcome, preview, confirmed/cancelled, rows
-    affected, latency, retry count.
+10. Every manipulation request logged to the operational database
+    (`app/core/opdb.py` — Neon Postgres in production, a local SQLite file
+    otherwise), via `app/core/audit.py`: timestamp, input, SQL, validation
+    outcome, preview, confirmed/cancelled, rows affected, latency, retry
+    count.
 11. `QP_READ_ONLY_MODE=true` disables the manipulation path entirely.
 12. **Foreign-key-aware deletes.** `orders → order_items` and
     `orders → payments` are `ON DELETE CASCADE` (a line item or payment
@@ -324,14 +326,14 @@ QueryPilot ships seeded with a synthetic cold-drinks distribution dataset
 agent, validator, or schema retrieval is hardcoded to that domain — swap in
 your own SQLite database and it adapts automatically.
 
-1. **Point `QP_DATABASE_PATH` at your file.** Add to `.env` (copy from
+1. **Point `QP_TEMPLATE_DB_PATH` at your file.** Add to `.env` (copy from
    `.env.example` if you don't have one yet):
 
    ```bash
-   QP_DATABASE_PATH=/absolute/path/to/your.db
+   QP_TEMPLATE_DB_PATH=/absolute/path/to/your.db
    ```
 
-   Or drop your file in as `data/querypilot.db` (the default path) and skip
+   Or drop your file in as `data/template.db` (the default path) and skip
    this step.
 
 2. **Enable foreign keys, if your schema has them.** QueryPilot's
@@ -344,13 +346,14 @@ your own SQLite database and it adapts automatically.
    parent(id)`), not just implicit joins by convention.
 
 3. **(Optional) Delete the stale schema index.** Table descriptions are
-   embedded into a persistent ChromaDB collection at `data/chroma/` for
-   fast retrieval. It keys off table names, so switching to a database with
-   different tables just adds new entries — but if you're replacing a table
-   with the same name and a different shape, clear the stale entry first:
+   embedded (via Gemini's `gemini-embedding-001`) into a JSON cache at
+   `data/schema_embeddings.json` for fast retrieval. It keys off each
+   table's description text, so switching to a database with different
+   tables just adds new entries — but if you're replacing a table with the
+   same name and a different shape, clear the stale entry first:
 
    ```bash
-   rm -rf data/chroma
+   rm data/schema_embeddings.json
    ```
 
    It's rebuilt automatically (from live `PRAGMA table_info` + sample rows)
