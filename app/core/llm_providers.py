@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Literal
 
+import openai
 import ollama
 
 from app.config import provider_credentials, settings
@@ -85,3 +86,49 @@ def build_ollama_cloud(model: str) -> Deployment:
     return _build_ollama(
         "ollama_cloud", model, provider_credentials.ollama_cloud_host, headers={"Authorization": f"Bearer {key}"}
     )
+
+
+def _openai_usage(response) -> dict:
+    usage = {}
+    if response.usage is not None:
+        usage["prompt_tokens"] = response.usage.prompt_tokens
+        usage["completion_tokens"] = response.usage.completion_tokens
+    return usage
+
+
+def _build_openai_compatible(provider_key: str, model: str, base_url: str, api_key: str) -> Deployment:
+    client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=settings.llm_request_timeout_seconds)
+
+    def _call(*, messages, temperature, format=None):
+        response_format = {"type": "json_object"} if format == "json" else None
+        response = client.chat.completions.create(
+            model=model, messages=messages, temperature=temperature, response_format=response_format
+        )
+        return response.choices[0].message.content, _openai_usage(response)
+
+    def _stream(*, messages, temperature):
+        stream = client.chat.completions.create(model=model, messages=messages, temperature=temperature, stream=True)
+        for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+    return Deployment(provider_key=provider_key, model=model, structured_mode="json_mode", _call=_call, _stream=_stream)
+
+
+def build_openrouter(model: str) -> Deployment:
+    key = provider_credentials.openrouter_api_key
+    if not key:
+        raise LLMConfigError(
+            "provider=openrouter requires OPENROUTER_API_KEY to be set (get one at https://openrouter.ai/keys)."
+        )
+    return _build_openai_compatible("openrouter", model, provider_credentials.openrouter_base_url, key)
+
+
+def build_groq(model: str) -> Deployment:
+    key = provider_credentials.groq_api_key
+    if not key:
+        raise LLMConfigError(
+            "provider=groq requires GROQ_API_KEY to be set (get one at https://console.groq.com/keys)."
+        )
+    return _build_openai_compatible("groq", model, provider_credentials.groq_base_url, key)
