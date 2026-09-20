@@ -2,6 +2,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: querypilot-ollama
+    profiles: ["local-llm"]
     ports:
       - "11434:11434"
     volumes:
@@ -31,6 +32,7 @@ services:
   model-init:
     image: ollama/ollama:latest
     container_name: querypilot-model-init
+    profiles: ["local-llm"]
     depends_on:
       ollama:
         condition: service_healthy
@@ -55,11 +57,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    depends_on:
-      ollama:
-        condition: service_healthy
-      model-init:
-        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

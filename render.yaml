@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: querypilot-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: QP_READ_ONLY_MODE
+        value: "false"
+      - key: QP_ROW_IMPACT_CEILING
+        value: "50"
+      - key: QP_AUTO_LIMIT
+        value: "200"
+      - key: QP_CONFIRMATION_TIMEOUT_SECONDS
+        value: "60"
+      - key: QP_SESSION_TTL_MINUTES
+        value: "30"
+      - key: QP_MAX_SESSIONS
+        value: "200"
+      - key: QP_LLM_PROFILE
+        value: "cloud"
+      - key: QP_CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: QP_DATABASE_URL
+        sync: false
+      - key: QP_ADMIN_TOKEN
+        sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: OLLAMA_CLOUD_HOST
+        value: "https://ollama.com"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
