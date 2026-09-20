@@ -34,10 +34,15 @@ Every LangGraph node that touches the database --
 own engine pair from `config["configurable"]["db_path"]`, threaded in by
 `app/main.py`'s `/chat` and `/confirm` routes. This was the part of the design
 with the most risk going in: LangGraph's node/config plumbing wasn't something
-this codebase had exercised before. It was live-verified (Task 3, on a real
-compiled test graph, not assumed) that LangGraph 1.2.10 correctly passes
-`config["configurable"]` into any node function that declares a
-`config: RunnableConfig` parameter.
+this codebase had exercised before. Task 3 verified the node function's own
+config-reading logic directly (calling `transactional_executor_node(state,
+config)` with a manually-built config dict, not through a compiled graph).
+The compiled-graph path itself -- `graph.stream(graph_input, config, ...)`,
+the call `app/main.py` actually makes (see lines 125, 153, 171) -- was
+live-verified by this task's own three real `/chat`/`/confirm` requests
+against the built image: `config["configurable"]["db_path"]` correctly
+reached each node through the real compiled graph, and each request produced
+the correct session-scoped result end-to-end.
 
 Cross-session isolation was checked at three levels, not just "no exception
 raised": unit tests on `get_engines` and `app.core.sessions`; a real
