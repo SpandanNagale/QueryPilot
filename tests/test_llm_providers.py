@@ -115,3 +115,60 @@ def test_groq_stream_yields_delta_content(monkeypatch):
         deployment = build_groq("openai/gpt-oss-20b")
         chunks = list(deployment.stream(messages=[{"role": "user", "content": "hey"}], temperature=0.0))
         assert chunks == ["he", "llo"]
+
+
+from app.core.llm_providers import build_deployment, build_gemini
+
+
+def test_gemini_requires_api_key(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "gemini_api_key", "")
+    with pytest.raises(LLMConfigError):
+        build_gemini("gemini-3.6-flash")
+
+
+def test_gemini_call_extracts_text_and_usage(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "gemini_api_key", "test-key")
+    with patch("app.core.llm_providers.genai.Client") as MockClient:
+        response = MagicMock()
+        response.text = "hello"
+        response.usage_metadata = MagicMock(prompt_token_count=7, candidates_token_count=2)
+        MockClient.return_value.models.generate_content.return_value = response
+
+        deployment = build_gemini("gemini-3.6-flash")
+        text = deployment.call(
+            messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "hey"}], temperature=0.0
+        )
+
+        assert text == "hello"
+        assert deployment.last_usage == {"prompt_tokens": 7, "completion_tokens": 2}
+        assert deployment.structured_mode == "native_schema"
+
+
+def test_gemini_passes_json_schema_when_format_given(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "gemini_api_key", "test-key")
+    with patch("app.core.llm_providers.genai.Client") as MockClient:
+        response = MagicMock()
+        response.text = '{"intent": "analytics"}'
+        response.usage_metadata = None
+        MockClient.return_value.models.generate_content.return_value = response
+
+        deployment = build_gemini("gemini-3.6-flash")
+        deployment.call(messages=[{"role": "user", "content": "hey"}], temperature=0.0, format={"type": "object"})
+
+        call_kwargs = MockClient.return_value.models.generate_content.call_args.kwargs
+        config = call_kwargs["config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_json_schema == {"type": "object"}
+
+
+def test_build_deployment_dispatches_to_the_right_builder(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "gemini_api_key", "test-key")
+    with patch("app.core.llm_providers.genai.Client"):
+        deployment = build_deployment("gemini", "gemini-3.6-flash")
+        assert deployment.provider_key == "gemini"
+        assert deployment.model == "gemini-3.6-flash"
+
+
+def test_build_deployment_rejects_unknown_provider():
+    with pytest.raises(LLMConfigError):
+        build_deployment("not_a_real_provider", "some-model")

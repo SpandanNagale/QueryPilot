@@ -132,3 +132,75 @@ def build_groq(model: str) -> Deployment:
             "provider=groq requires GROQ_API_KEY to be set (get one at https://console.groq.com/keys)."
         )
     return _build_openai_compatible("groq", model, provider_credentials.groq_base_url, key)
+
+
+from google import genai
+from google.genai import types
+
+
+def _gemini_usage(response) -> dict:
+    usage = {}
+    meta = response.usage_metadata
+    if meta is not None:
+        if meta.prompt_token_count is not None:
+            usage["prompt_tokens"] = meta.prompt_token_count
+        if meta.candidates_token_count is not None:
+            usage["completion_tokens"] = meta.candidates_token_count
+    return usage
+
+
+def _messages_to_gemini(messages: list[dict]) -> tuple[str | None, list]:
+    system_instruction: str | None = None
+    contents = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_instruction = f"{system_instruction}\n{msg['content']}" if system_instruction else msg["content"]
+            continue
+        gemini_role = "model" if msg["role"] == "assistant" else "user"
+        contents.append(types.Content(role=gemini_role, parts=[types.Part(text=msg["content"])]))
+    return system_instruction, contents
+
+
+def build_gemini(model: str) -> Deployment:
+    key = provider_credentials.gemini_api_key
+    if not key:
+        raise LLMConfigError(
+            "provider=gemini requires GEMINI_API_KEY to be set (get one at https://aistudio.google.com/apikey)."
+        )
+    client = genai.Client(api_key=key)
+
+    def _call(*, messages, temperature, format=None):
+        system_instruction, contents = _messages_to_gemini(messages)
+        config_kwargs = {"temperature": temperature, "system_instruction": system_instruction}
+        if format is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_json_schema"] = format
+        response = client.models.generate_content(
+            model=model, contents=contents, config=types.GenerateContentConfig(**config_kwargs)
+        )
+        return response.text, _gemini_usage(response)
+
+    def _stream(*, messages, temperature):
+        system_instruction, contents = _messages_to_gemini(messages)
+        config = types.GenerateContentConfig(temperature=temperature, system_instruction=system_instruction)
+        for chunk in client.models.generate_content_stream(model=model, contents=contents, config=config):
+            if chunk.text:
+                yield chunk.text
+
+    return Deployment(provider_key="gemini", model=model, structured_mode="native_schema", _call=_call, _stream=_stream)
+
+
+PROVIDER_BUILDERS: dict[str, Callable[[str], Deployment]] = {
+    "ollama_local": build_ollama_local,
+    "ollama_cloud": build_ollama_cloud,
+    "openrouter": build_openrouter,
+    "groq": build_groq,
+    "gemini": build_gemini,
+}
+
+
+def build_deployment(provider_key: str, model: str) -> Deployment:
+    builder = PROVIDER_BUILDERS.get(provider_key)
+    if builder is None:
+        raise LLMConfigError(f"Unknown provider {provider_key!r}. Supported: {', '.join(PROVIDER_BUILDERS)}")
+    return builder(model)
