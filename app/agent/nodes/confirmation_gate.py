@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
 from app.agent.state import AgentState
@@ -24,7 +25,7 @@ def _interpret_answer(answer) -> bool:
     return False
 
 
-def confirmation_gate_node(state: AgentState) -> dict:
+def confirmation_gate_node(state: AgentState, config: RunnableConfig) -> dict:
     answer = interrupt(
         {
             "type": "confirmation_request",
@@ -46,6 +47,7 @@ def confirmation_gate_node(state: AgentState) -> dict:
         started_at = state.get("manipulation_started_at")
         log_event(
             event="manipulation_timed_out" if is_timeout else "manipulation_cancelled",
+            session_id=config["configurable"]["thread_id"],
             user_input=state["user_input"],
             generated_sql=state["generated_sql"],
             preview=state.get("preview"),
