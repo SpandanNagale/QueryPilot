@@ -99,7 +99,7 @@ _cors_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=bool(_cors_origins),  # never combine "*" with credentials; an empty list keeps this False too
+    allow_credentials=bool(_cors_origins) and "*" not in _cors_origins,  # never combine "*" with credentials; an empty list keeps this False too
     allow_methods=["*"],
     allow_headers=["*"],
 )
