@@ -300,3 +300,65 @@ def test_byok_key_never_appears_in_budget_entry_audit_or_log_for_chat_request(tm
         assert _SECRET_BYOK_KEY not in caplog.text
     finally:
         llm_events.clear_llm_attempt_listeners()
+
+
+class _KeyLeakingExceptionGraph:
+    """Simulates a provider SDK exception whose message echoes the caller's
+    own (invalid) key back -- a plausible real shape for a 401 invalid-key
+    error, and exactly the scenario _run_graph_stream's redaction guards
+    against. Raises when .stream() is CALLED (mirrors test_main_errors.py's
+    _ExplodingGraph), so it's caught by the same outer except Exception
+    block as a mid-stream failure would be."""
+
+    def stream(self, *args, **kwargs):
+        raise RuntimeError(f"Invalid API key: {_SECRET_BYOK_KEY}")
+
+
+def test_byok_key_never_appears_in_logs_when_the_underlying_call_fails(tmp_path, monkeypatch, caplog):
+    _use_tmp_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "session_dir", tmp_path)
+    session_id = str(uuid.uuid4())
+    monkeypatch.setitem(main_module._state, "graph", _KeyLeakingExceptionGraph())
+
+    req = main_module.ChatRequest(
+        session_id=session_id, message="hi", byok_provider="gemini", byok_api_key=_SECRET_BYOK_KEY
+    )
+    with caplog.at_level("DEBUG"):
+        response = main_module.chat(req, _make_request("10.5.0.6"))
+        body = _drain_body(response)
+
+    # the client-facing SSE body never carried the raw exception text to
+    # begin with (that's test_main_errors.py's job) -- the new behavior
+    # under test is the *log* output.
+    assert _SECRET_BYOK_KEY not in body
+    assert '"code": "INTERNAL"' in body
+
+    assert _SECRET_BYOK_KEY not in caplog.text
+    # ... and something reasonable IS still logged -- the exception wasn't
+    # silently swallowed by the redaction, just sanitized.
+    assert "Unhandled exception in graph stream" in caplog.text
+    assert session_id in caplog.text
+    assert "[REDACTED]" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_non_byok_request_exception_logging_is_unaffected_by_redaction(tmp_path, monkeypatch, caplog):
+    """No byok on this request -- _redact must be a no-op (nothing to
+    redact), so the real exception text still reaches the log same as
+    before this fix, for the ordinary (non-BYOK) failure path."""
+    _use_tmp_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "session_dir", tmp_path)
+    session_id = str(uuid.uuid4())
+
+    class _PlainExplodingGraph:
+        def stream(self, *args, **kwargs):
+            raise RuntimeError("plain failure, no key involved")
+
+    monkeypatch.setitem(main_module._state, "graph", _PlainExplodingGraph())
+    req = main_module.ChatRequest(session_id=session_id, message="hi")
+    with caplog.at_level("DEBUG"):
+        response = main_module.chat(req, _make_request("10.5.0.7"))
+        _drain_body(response)
+
+    assert "plain failure, no key involved" in caplog.text
+    assert "[REDACTED]" not in caplog.text

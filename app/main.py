@@ -10,6 +10,7 @@ import logging
 import secrets
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Generator
@@ -233,8 +234,22 @@ def _error_detail(code: ErrorCode) -> dict:
     return {"code": code.value, "message": AppError(code).message}
 
 
+def _redact(text: str, secret: str | None) -> str:
+    return text.replace(secret, "[REDACTED]") if secret else text
+
+
 def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[str, None, None]:
     graph = _state["graph"]
+    # An ordinary generator-frame local, not the request_context contextvar
+    # -- config is stable across every dispatch of this generator regardless
+    # of iterate_in_threadpool's per-dispatch context copying (see the
+    # set_session_id comment below), since plain locals live in the
+    # generator's own frame, untouched by that mechanism. Used only to
+    # redact a BYOK key from the exception handler below if the underlying
+    # provider call fails and its exception message happens to echo the key
+    # back (a common shape for an invalid-key error) -- never logged or
+    # emitted itself.
+    byok_key = ((config.get("configurable") or {}).get("byok") or {}).get("api_key")
     try:
         stream_iter = graph.stream(graph_input, config, stream_mode=["updates", "custom"])
         while True:
@@ -282,9 +297,20 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
                 if event_name and partial:
                     yield _sse(event_name, partial)
     except Exception as exc:  # noqa: BLE001 - surface to the client instead of a bare 500 mid-stream
-        logger.exception("Unhandled exception in graph stream (session_id=%s)", session_id)
+        # Manually formatted + redacted, not logger.exception(...): that
+        # method's own exc_info=True traceback formatting can't be
+        # intercepted before it's written, so a BYOK key echoed back in the
+        # underlying exception's message (e.g. a provider's invalid-key
+        # error) would otherwise reach the server log unredacted --
+        # formatting it ourselves first lets us scrub the literal key from
+        # every line (message and any chained-exception frames) before it's
+        # ever handed to logging.
+        sanitized_traceback = _redact(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), byok_key
+        )
+        logger.error("Unhandled exception in graph stream (session_id=%s):\n%s", session_id, sanitized_traceback)
         code = classify_exception_to_code(exc)
-        yield _sse("error", AppError(code, detail=str(exc), node="server").to_dict())
+        yield _sse("error", AppError(code, detail=_redact(str(exc), byok_key), node="server").to_dict())
     finally:
         yield _sse("done", {})
 
