@@ -74,6 +74,11 @@ def dry_run_preview_node(state: AgentState, config: RunnableConfig) -> dict:
 
     return {
         "preview": preview_info,
+        # Bundled into this node's own "preview" SSE event (NODE_EVENT_MAP
+        # maps one event per node) rather than a separate validator_verdict
+        # event -- the preview *is* the moment this check's result matters
+        # to the user.
+        "validator_verdict": impact.to_dict(),
         "awaiting_confirmation": True,
         "error": None,
         "manipulation_started_at": started_at,

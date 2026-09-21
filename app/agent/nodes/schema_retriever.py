@@ -12,6 +12,8 @@ _FULL_SCHEMA_TABLE_COUNT = 6  # from TABLE_PURPOSES in schema_store.py; a retrie
 
 def schema_retriever_node(state: AgentState, config: RunnableConfig) -> dict:
     tables = retrieve_relevant_tables(state["user_input"])
+    update: dict = {"relevant_schema": format_schema_context(tables)}
     if len(tables) >= _FULL_SCHEMA_TABLE_COUNT:
         log_event(event="degraded", session_id=config["configurable"]["thread_id"], reason="schema_embedding_fallback")
-    return {"relevant_schema": format_schema_context(tables)}
+        update["degraded"] = True  # surfaced as this node's node_state (app/main.py::_run_graph_stream)
+    return update

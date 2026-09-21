@@ -33,16 +33,25 @@ class ValidationResult:
     statement_type: str | None = None
     reasons: list[str] = field(default_factory=list)
     parsed: exp.Expression | None = field(default=None, repr=False)
+    # Structured record of which individual checks ran and passed, for the
+    # Phase 4 `validator_verdict` SSE event -- e.g. [{"name": "tables_exist",
+    # "passed": true}, ...]. Additive to `reasons` (the human-readable
+    # failure text), never a replacement for it.
+    checks: list[dict] = field(default_factory=list)
 
     def fail(self, reason: str) -> None:
         self.passed = False
         self.reasons.append(reason)
+
+    def add_check(self, name: str, passed: bool) -> None:
+        self.checks.append({"name": name, "passed": passed})
 
     def to_dict(self) -> dict:
         return {
             "passed": self.passed,
             "statement_type": self.statement_type,
             "reasons": list(self.reasons),
+            "checks": list(self.checks),
         }
 
 
@@ -69,13 +78,17 @@ def _parse_single_statement(sql: str, result: ValidationResult) -> exp.Expressio
         statements = [s for s in sqlglot.parse(sql, read=DIALECT) if s is not None]
     except Exception as exc:
         result.fail(f"SQL failed to parse: {exc}")
+        result.add_check("sql_parses", False)
         return None
+    result.add_check("sql_parses", True)
 
     if len(statements) == 0:
         result.fail("No SQL statement found.")
+        result.add_check("statement_type_allowed", False)
         return None
     if len(statements) > 1:
         result.fail("Multiple statements in a single request are not allowed.")
+        result.add_check("statement_type_allowed", False)
         return None
 
     stmt = statements[0]
@@ -85,17 +98,23 @@ def _parse_single_statement(sql: str, result: ValidationResult) -> exp.Expressio
             f"Statement type '{stmt.key.upper()}' is not permitted. "
             "Only SELECT, INSERT, UPDATE, DELETE are allowed."
         )
+        result.add_check("statement_type_allowed", False)
         return None
 
     result.statement_type = stmt_type
+    result.add_check("statement_type_allowed", True)
     return stmt
 
 
 def _check_where_clause(stmt: exp.Expression, result: ValidationResult) -> None:
-    if isinstance(stmt, (exp.Delete, exp.Update)) and stmt.args.get("where") is None:
+    if not isinstance(stmt, (exp.Delete, exp.Update)):
+        return
+    has_where = stmt.args.get("where") is not None
+    if not has_where:
         result.fail(
             f"{result.statement_type} requires a WHERE clause — unconditional writes are blocked."
         )
+    result.add_check("where_clause_required", has_where)
 
 
 def _cte_names(stmt: exp.Expression) -> set[str]:
@@ -109,6 +128,7 @@ def _check_schema_references(stmt: exp.Expression, schema: dict[str, set[str]], 
     cte_names = _cte_names(stmt)
     alias_to_table: dict[str, str] = {}
     referenced_tables: set[str] = set()
+    tables_ok = True
 
     for t in stmt.find_all(exp.Table):
         name = t.name.lower()
@@ -116,10 +136,13 @@ def _check_schema_references(stmt: exp.Expression, schema: dict[str, set[str]], 
             continue
         if name not in schema:
             result.fail(f"Unknown table '{t.name}' — it does not exist in the database.")
+            tables_ok = False
             continue
         referenced_tables.add(name)
         if t.alias:
             alias_to_table[t.alias.lower()] = name
+
+    result.add_check("tables_exist", tables_ok)
 
     valid_columns: set[str] = set()
     for t in referenced_tables:
@@ -130,6 +153,7 @@ def _check_schema_references(stmt: exp.Expression, schema: dict[str, set[str]], 
     # in ORDER BY / GROUP BY / HAVING.
     output_aliases = {a.alias.lower() for a in stmt.find_all(exp.Alias) if a.alias}
 
+    columns_ok = True
     for c in stmt.find_all(exp.Column):
         col_name = c.name.lower()
         if not col_name or col_name == "*":
@@ -143,9 +167,13 @@ def _check_schema_references(stmt: exp.Expression, schema: dict[str, set[str]], 
                 continue  # subquery/CTE alias we can't resolve further; don't false-positive
             if col_name not in schema[real_table]:
                 result.fail(f"Unknown column '{c.table}.{c.name}'.")
+                columns_ok = False
         else:
             if valid_columns and col_name not in valid_columns:
                 result.fail(f"Unknown column '{c.name}'.")
+                columns_ok = False
+
+    result.add_check("columns_exist", columns_ok)
 
 
 def validate_sql(sql: str, *, intent: str = "analytics", engine: Engine = read_only_engine) -> ValidationResult:
@@ -221,6 +249,7 @@ def check_row_impact(
             for impact in impacts:
                 total += conn.execute(text(impact.count_sql)).scalar_one()
 
+            fk_cascade_clear = True
             for ref in blocking_refs:
                 blocked_count = conn.execute(
                     text(
@@ -229,18 +258,22 @@ def check_row_impact(
                     )
                 ).scalar_one()
                 if blocked_count > 0:
+                    fk_cascade_clear = False
                     result.fail(
                         f"Can't delete this: {blocked_count} row(s) in '{ref.child_table}' still reference "
                         f"it via '{ref.child_column}'. Remove or reassign those first."
                     )
+        result.add_check("fk_cascade_clear", fk_cascade_clear)
 
         if not result.passed:
             return result
 
-    if total > ceiling:
+    within_ceiling = total <= ceiling
+    if not within_ceiling:
         detail = f" (including {total - count} row(s) that would cascade-delete)" if total != count else ""
         result.fail(
             f"This would affect {total} rows{detail}, which exceeds the safety limit of {ceiling}. "
             "Please narrow your request (e.g. add more specific conditions)."
         )
+    result.add_check("row_impact_within_ceiling", within_ceiling)
     return result

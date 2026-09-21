@@ -44,7 +44,11 @@ _cache_hit_listeners: list[Callable[[dict], None]] = []
 
 
 def register_cache_hit_listener(fn: Callable[[dict], None]) -> None:
-    _cache_hit_listeners.append(fn)
+    # Idempotent, same reason as register_llm_attempt_listener above: app/main.py's
+    # lifespan (and `with TestClient(app):` in tests) can trigger more than once
+    # per process.
+    if fn not in _cache_hit_listeners:
+        _cache_hit_listeners.append(fn)
 
 
 def clear_cache_hit_listeners() -> None:

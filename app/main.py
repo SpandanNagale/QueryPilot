@@ -8,10 +8,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue as queue_module
 import secrets
 import threading
 import time
 import traceback
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Generator
@@ -30,13 +32,16 @@ from app.agent.nodes.intent_classifier import intent_classifier_node
 from app.agent.nodes.sql_generator import sql_generator_node
 from app.agent.prompts import get_schema_tour
 from app.config import settings
+from app.core import langfuse_sink
 from app.core.audit import read_events
 from app.core.db import get_engines, read_only_engine
 from app.core.errors import AppError, ErrorCode, classify_exception_to_code, classify_reason_to_code
+from app.core.langfuse_sink import LangfuseSink, get_trace_url
 from app.core.llm import check_providers
-from app.core.llm_events import register_llm_attempt_listener
+from app.core.llm_events import register_cache_hit_listener, register_llm_attempt_listener
+from app.core.node_state import NodeState
 from app.core.rate_limit import check_rate_limit
-from app.core.request_context import set_session_id
+from app.core.request_context import drain_events, push_event, set_session_id, start_event_buffer
 from app.core.schema_store import (
     build_or_refresh_index,
     format_schema_context,
@@ -92,10 +97,13 @@ _pending_confirmations: dict[str, float] = {}
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 # node name -> SSE event name for its state update. Nodes not listed here
-# either have no user-facing update of their own (e.g. validator succeeding
-# silently) or are handled specially (insight_summarizer streams tokens;
-# interrupts are handled via the "__interrupt__" pseudo-key).
+# either have no user-facing update of their own or are handled specially
+# (insight_summarizer streams tokens; interrupts are handled via the
+# "__interrupt__" pseudo-key).
 NODE_EVENT_MAP: dict[str, str] = {
+    "guardrail": "guardrail",
+    "validator": "validator_verdict",
+    "auto_limit_injector": "validator_verdict",  # carries its own "auto_limit_injected" check -- see that node
     "sql_generator": "sql_generated",
     "self_corrector": "sql_generated",
     "dry_run_preview": "preview",
@@ -109,6 +117,48 @@ NODE_EVENT_MAP: dict[str, str] = {
     "ask_clarifying_question": "message",
     "error_response": "message",
 }
+
+
+def _forward_llm_attempt_to_stream(event: dict) -> None:
+    push_event(event)
+
+
+def _forward_cache_hit_to_stream(event: dict) -> None:
+    push_event(event)
+
+
+_HEARTBEAT_INTERVAL_SECONDS = 15.0
+
+
+# Static "what would have run next" table for the node_state "not_reached"
+# signal, keyed by the node that just failed. This mirrors graph.py's own
+# edges by hand rather than walking the compiled graph at runtime, because
+# the graph branches (analytics vs. manipulation) and loops (validator <->
+# sql_generator, self_corrector -> analytics_executor) in ways a generic
+# reachability walk can't resolve without knowing which branch was taken --
+# ponytail: hardcoded to the graph's current shape; update alongside any
+# edge change in app/agent/graph.py.
+def _not_reached_after(node_name: str, result: dict, intent: str | None) -> list[str]:
+    if node_name == "guardrail":
+        return ["intent_classifier", "schema_retriever", "sql_generator", "validator", "ambiguity_check"]
+    if node_name == "validator":
+        if result.get("retry_count", 0) <= settings.max_generation_retries:
+            return []  # still retrying via sql_generator -- not a terminal failure yet
+        tail = ["ambiguity_check"]
+        if intent == "manipulation":
+            tail += ["dry_run_preview", "confirmation_gate", "transactional_executor", "audit_logger"]
+        else:
+            tail += ["auto_limit_injector", "analytics_executor", "insight_summarizer", "chart_detector", "followup_suggester"]
+        return tail
+    if node_name == "dry_run_preview":
+        return ["confirmation_gate", "transactional_executor", "audit_logger"]
+    if node_name == "analytics_executor":
+        if result.get("retry_count", 0) < settings.max_self_correction_attempts:
+            return []  # still retrying via self_corrector
+        return ["insight_summarizer", "chart_detector", "followup_suggester"]
+    if node_name == "transactional_executor":
+        return ["audit_logger"]
+    return []
 
 
 # frontend/index.html has no static example-prompts list of its own -- its only
@@ -200,6 +250,8 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=_prewarm_llm_cache, name="llm-cache-prewarm", daemon=True).start()
 
     register_llm_attempt_listener(budget.record_llm_attempt)
+    register_llm_attempt_listener(_forward_llm_attempt_to_stream)
+    register_cache_hit_listener(_forward_cache_hit_to_stream)
 
     yield
 
@@ -265,50 +317,157 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
     # An ordinary generator-frame local, not the request_context contextvar
     # -- config is stable across every dispatch of this generator regardless
     # of iterate_in_threadpool's per-dispatch context copying (see the
-    # set_session_id comment below), since plain locals live in the
-    # generator's own frame, untouched by that mechanism. Used only to
-    # redact a BYOK key from the exception handler below if the underlying
-    # provider call fails and its exception message happens to echo the key
-    # back (a common shape for an invalid-key error) -- never logged or
-    # emitted itself.
+    # producer-thread comment below). Used only to redact a BYOK key from
+    # the exception handler below if the underlying provider call fails and
+    # its exception message happens to echo the key back (a common shape
+    # for an invalid-key error) -- never logged or emitted itself.
     byok_key = ((config.get("configurable") or {}).get("byok") or {}).get("api_key")
+    user_input = graph_input.get("user_input", "") if isinstance(graph_input, dict) else ""
+    run_id = uuid.uuid4().hex
+    sink = LangfuseSink(run_id, session_id=session_id, user_input=user_input)
+
+    # Producer thread + queue, rather than driving graph.stream() directly
+    # in this generator: a heartbeat needs to interleave with a single
+    # blocking node call (e.g. a multi-provider LLM fallback chain can take
+    # 30s+), which a plain synchronous generator can't do -- next() either
+    # returns the next chunk or blocks, with no way to time out and emit
+    # something in between. Running the actual graph.stream() consumption
+    # on its own thread lets this generator poll the queue with a timeout
+    # and emit a heartbeat on each miss.
+    #
+    # This also *simplifies* the old per-dispatch set_session_id() dance:
+    # since this thread is not re-entered through Starlette's
+    # iterate_in_threadpool (which copies a fresh context on every next()
+    # dispatch of the outer generator), a plain set_session_id() once at
+    # thread start stays visible for every node call this thread ever
+    # makes, for this thread's whole lifetime. Verified safe to call
+    # LangGraph's SqliteSaver and every SQLAlchemy engine in this app from a
+    # non-main thread: both are already opened with check_same_thread=False
+    # (app/core/db.py, langgraph.checkpoint.sqlite) specifically because the
+    # app was already dispatching across the threadpool's many worker
+    # threads before this change.
+    q: "queue_module.Queue[tuple]" = queue_module.Queue()
+
+    def _produce() -> None:
+        set_session_id(session_id)
+        try:
+            stream_iter = graph.stream(graph_input, config, stream_mode=["updates", "custom", "tasks"])
+            while True:
+                start_event_buffer()
+                try:
+                    item = next(stream_iter)
+                except StopIteration:
+                    q.put(("done", None, []))
+                    return
+                q.put(("chunk", item, drain_events()))
+        except Exception as exc:  # noqa: BLE001 - handed to the consumer loop below to format/redact/log
+            q.put(("error", exc, []))
+
+    threading.Thread(target=_produce, name=f"graph-stream-{session_id[:8]}", daemon=True).start()
+
+    run_started = time.monotonic()
+    node_started_at: dict[str, float] = {}
+    node_latencies_ms: dict[str, float] = {}
+    llm_attempts: list[dict] = []
+    cache_hits: list[dict] = []
+    cache_hit_nodes: set[str] = set()
+    intent_seen: str | None = None
+
     try:
-        stream_iter = graph.stream(graph_input, config, stream_mode=["updates", "custom"])
         while True:
-            # Re-armed on every resumption of this generator, not set once
-            # up front, because of how Starlette drives a sync
-            # StreamingResponse body: iterate_in_threadpool dispatches each
-            # next() call through anyio.to_thread.run_sync, which copies a
-            # FRESH snapshot of the ambient (never-mutated) request context
-            # on every single dispatch -- verified empirically, including
-            # that resetting a Token minted in one such copy from inside
-            # another raises `ValueError: Token ... was created in a
-            # different Context`. A ContextVar.set() before this loop would
-            # only be visible for the very first chunk; every later node's
-            # LLM call (in a later next(stream_iter), i.e. a later dispatch)
-            # would see the var back at its default. Setting it immediately
-            # before each next(stream_iter) call keeps it visible in the
-            # exact dispatch that runs the node -- which is where
-            # app/core/budget.py's llm_attempt listener needs to read it
-            # from. Plain set(), no token/reset: each HTTP request already
-            # runs in its own isolated asyncio Task, so nothing leaks across
-            # requests without one.
-            set_session_id(session_id)
             try:
-                mode, chunk = next(stream_iter)
-            except StopIteration:
+                kind, payload, buffered = q.get(timeout=_HEARTBEAT_INTERVAL_SECONDS)
+            except queue_module.Empty:
+                yield _sse("heartbeat", {})
+                continue
+
+            for ev in buffered:
+                event_type = ev["event_type"]
+                node = ev.get("node")  # cache_hit only -- llm_attempt has no node, just alias/provider/model
+                if event_type == "llm_attempt":
+                    llm_attempts.append(ev)
+                    sink.llm_attempt(node or ev.get("alias") or "unknown", ev)
+                elif event_type == "cache_hit":
+                    cache_hits.append(ev)
+                    if node:
+                        cache_hit_nodes.add(node)
+                    sink.cache_hit(node or "unknown", ev)
+                yield _sse(event_type, {k: v for k, v in ev.items() if k != "event_type"})
+
+            if kind == "done":
                 break
+
+            if kind == "error":
+                exc = payload
+                # Manually formatted + redacted, not logger.exception(...):
+                # that method's own exc_info=True traceback formatting
+                # can't be intercepted before it's written, so a BYOK key
+                # echoed back in the underlying exception's message (e.g. a
+                # provider's invalid-key error) would otherwise reach the
+                # server log unredacted -- formatting it ourselves first
+                # lets us scrub the literal key from every line (message
+                # and any chained-exception frames) before it's ever handed
+                # to logging.
+                sanitized_traceback = _redact(
+                    "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), byok_key
+                )
+                logger.error("Unhandled exception in graph stream (session_id=%s):\n%s", session_id, sanitized_traceback)
+                code = classify_exception_to_code(exc)
+                yield _sse("error", AppError(code, detail=_redact(str(exc), byok_key), node="server").to_dict())
+                break
+
+            mode, chunk = payload
+
+            if mode == "tasks":
+                name = chunk.get("name")
+                if name is None:
+                    continue
+                if "input" in chunk:  # task started -- no "result"/"error" key yet
+                    node_started_at[name] = time.monotonic()
+                    sink.node_running(name)
+                    yield _sse("node_state", {"node": name, "state": NodeState.RUNNING.value})
+                    continue
+
+                # task finished: chunk["result"] is the exact dict the node
+                # returned (same content as the "updates" chunk for this
+                # step), so node_state can be computed from this alone.
+                started = node_started_at.pop(name, None)
+                if started is not None:
+                    node_latencies_ms[name] = (time.monotonic() - started) * 1000
+                result = chunk.get("result") or {}
+                task_error = chunk.get("error")
+                node_error = result.get("error") if isinstance(result, dict) else None
+                if task_error is not None or node_error:
+                    state = NodeState.FAILED
+                elif name in cache_hit_nodes:
+                    state = NodeState.SKIPPED_CACHED
+                elif isinstance(result, dict) and result.get("degraded"):
+                    state = NodeState.DEGRADED
+                else:
+                    state = NodeState.SUCCEEDED
+                detail = str(task_error) if task_error is not None else node_error
+                sink.node_finished(name, state=state.value, detail=detail)
+                yield _sse("node_state", {"node": name, "state": state.value})
+
+                if state == NodeState.FAILED:
+                    for downstream in _not_reached_after(name, result if isinstance(result, dict) else {}, intent_seen):
+                        yield _sse("node_state", {"node": downstream, "state": NodeState.NOT_REACHED.value})
+                continue
 
             if mode == "custom":
                 yield _sse("token", chunk)
                 continue
 
+            # mode == "updates"
             for node_name, partial in chunk.items():
                 if node_name == "__interrupt__":
-                    payload = partial[0].value if partial else {}
+                    interrupt_payload = partial[0].value if partial else {}
                     _pending_confirmations[session_id] = time.time()
-                    yield _sse("awaiting_confirmation", payload)
+                    yield _sse("awaiting_confirmation", interrupt_payload)
                     continue
+
+                if node_name == "intent_classifier" and partial and partial.get("intent"):
+                    intent_seen = partial["intent"]
 
                 if partial and partial.get("error"):
                     reason = partial["error"]
@@ -330,26 +489,33 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
                     # never forward them again raw inside this second,
                     # node-specific event (e.g. analytics_executor's "result"
                     # payload on a DB-exception failure).
-                    payload = {k: v for k, v in partial.items() if k not in ("error", "client_error")}
-                    if payload:
-                        yield _sse(event_name, payload)
-    except Exception as exc:  # noqa: BLE001 - surface to the client instead of a bare 500 mid-stream
-        # Manually formatted + redacted, not logger.exception(...): that
-        # method's own exc_info=True traceback formatting can't be
-        # intercepted before it's written, so a BYOK key echoed back in the
-        # underlying exception's message (e.g. a provider's invalid-key
-        # error) would otherwise reach the server log unredacted --
-        # formatting it ourselves first lets us scrub the literal key from
-        # every line (message and any chained-exception frames) before it's
-        # ever handed to logging.
-        sanitized_traceback = _redact(
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), byok_key
-        )
-        logger.error("Unhandled exception in graph stream (session_id=%s):\n%s", session_id, sanitized_traceback)
-        code = classify_exception_to_code(exc)
-        yield _sse("error", AppError(code, detail=_redact(str(exc), byok_key), node="server").to_dict())
+                    node_payload = {k: v for k, v in partial.items() if k not in ("error", "client_error")}
+                    if node_payload:
+                        yield _sse(event_name, node_payload)
     finally:
-        yield _sse("done", {})
+        summary = {
+            "run_id": run_id,
+            "total_latency_ms": round((time.monotonic() - run_started) * 1000, 1),
+            "node_latencies_ms": {k: round(v, 1) for k, v in node_latencies_ms.items()},
+            "llm_attempts": [
+                {
+                    "alias": a.get("alias"),
+                    "provider": a.get("provider"),
+                    "model": a.get("model"),
+                    "success": a.get("success"),
+                    "latency_ms": a.get("latency_ms"),
+                    "prompt_tokens": a.get("prompt_tokens"),
+                    "completion_tokens": a.get("completion_tokens"),
+                    "cost_usd": a.get("cost_usd"),
+                }
+                for a in llm_attempts
+            ],
+            "cache_hits": len(cache_hits),
+            "cache_seconds_saved": round(sum(c.get("seconds_saved") or 0.0 for c in cache_hits), 3),
+            "trace_url": get_trace_url(run_id) if langfuse_sink.is_configured() else None,
+        }
+        sink.run_finished(summary=summary)
+        yield _sse("done", summary)
 
 
 @app.post("/chat")

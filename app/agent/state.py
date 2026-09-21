@@ -62,6 +62,13 @@ class AgentState(TypedDict):
     relevant_schema: NotRequired[str]
     generated_sql: NotRequired[str]
     validation_result: NotRequired[dict]
+    # Phase 4's `validator_verdict` SSE event payload -- distinct from
+    # validation_result: auto_limit_injector_node and dry_run_preview_node
+    # also write this (their own check(s), not validate_sql's). A LangGraph
+    # state key with no channel here is silently dropped from every node's
+    # return value -- this field must stay declared for any node to be able
+    # to surface a validator_verdict event at all.
+    validator_verdict: NotRequired[dict]
     ambiguity: NotRequired[AmbiguityInfo]
     preview: NotRequired[PreviewInfo]
     awaiting_confirmation: NotRequired[bool]
@@ -74,3 +81,6 @@ class AgentState(TypedDict):
     final_response: NotRequired[str]
     chart_spec: NotRequired[ChartSpec | None]
     followups: NotRequired[list[str]]
+    # node_state "degraded" signal (Phase 4) -- set by schema_retriever_node
+    # when schema embedding retrieval falls back to the full schema.
+    degraded: NotRequired[bool]

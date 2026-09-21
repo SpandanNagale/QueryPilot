@@ -94,3 +94,19 @@ class ProviderCredentials(BaseSettings):
 
 
 provider_credentials = ProviderCredentials()
+
+
+class LangfuseSettings(BaseSettings):
+    """Optional Langfuse tracing (Phase 4). Unprefixed, matching the sibling
+    Crewai-Research-pipeline repo's config/settings.py -- and Langfuse's own
+    documented env var names. Unset (the default) disables tracing entirely;
+    see app/core/langfuse_sink.py::is_configured()."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
+
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+
+langfuse_settings = LangfuseSettings()
