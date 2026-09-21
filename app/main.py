@@ -378,8 +378,13 @@ def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     # checkpointed session, permanently defeating sql_generator_node's cache
     # guard (its "prior_error is None" check) and injecting a nonsense
     # "Previous error: Guardrail blocked..." into every subsequent
-    # SQL-generation prompt for that session.
-    graph_input = {"user_input": req.message, "error": None}
+    # SQL-generation prompt for that session. client_error needs the same
+    # per-turn reset for the same reason: it's the client-facing sibling
+    # analytics_executor/transactional_executor set on a genuine DB
+    # exception, and error_response_node prefers it over error whenever it's
+    # set -- left stale, one DB hiccup anywhere in a session's history would
+    # permanently override every later turn's real error_response message.
+    graph_input = {"user_input": req.message, "error": None, "client_error": None}
     return StreamingResponse(_run_graph_stream(req.session_id, config, graph_input), media_type="text/event-stream")
 
 
