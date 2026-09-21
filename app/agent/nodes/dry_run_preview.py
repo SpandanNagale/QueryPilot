@@ -58,13 +58,21 @@ def dry_run_preview_node(state: AgentState, config: RunnableConfig) -> dict:
             impacts = build_cascade_impact_queries(preview, cascade_refs)
             cascades = []
             with read_only_engine.connect() as conn:
-                for impact in impacts:
-                    cascade_rows = [dict(row._mapping) for row in conn.execute(text(impact.preview_sql)).fetchall()]
+                # Deliberately NOT named `impact`: that name is already bound
+                # above to check_row_impact()'s ValidationResult, which is
+                # still needed after this loop (validator_verdict below) --
+                # shadowing it here silently broke every DELETE-with-cascade
+                # preview (AttributeError: 'CascadeImpact' object has no
+                # attribute 'to_dict'), caught live by evals/run_evals.py.
+                for cascade_impact in impacts:
+                    cascade_rows = [
+                        dict(row._mapping) for row in conn.execute(text(cascade_impact.preview_sql)).fetchall()
+                    ]
                     if cascade_rows:
                         cascades.append(
                             {
-                                "table": impact.table,
-                                "column": impact.column,
+                                "table": cascade_impact.table,
+                                "column": cascade_impact.column,
                                 "rows": cascade_rows,
                                 "row_count": len(cascade_rows),
                             }

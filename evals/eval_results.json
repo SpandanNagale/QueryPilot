@@ -1,11 +1,12 @@
 {
+  "generated_at": "2026-09-21T06:45:00.543674+00:00",
   "results": [
     {
       "id": "select_01",
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=10, ref_rows=10, match=True",
-      "latency": 52.47,
+      "latency": 79.34,
       "generated_sql": "SELECT name, unit_price, bottle_size_ml FROM products WHERE category = 'cola' LIMIT 200"
     },
     {
@@ -13,31 +14,31 @@
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=15, ref_rows=15, match=True",
-      "latency": 42.18,
-      "generated_sql": "SELECT name, retailer_type, credit_limit FROM retailers WHERE town = 'Dapoli' LIMIT 200"
+      "latency": 272.24,
+      "generated_sql": "SELECT id, name, retailer_type, credit_limit FROM retailers WHERE town = 'Dapoli' LIMIT 200"
     },
     {
       "id": "select_03",
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=19, ref_rows=19, match=True",
-      "latency": 34.78,
-      "generated_sql": "SELECT name, town, credit_limit FROM retailers WHERE retailer_type = 'hotel' LIMIT 200"
+      "latency": 6.12,
+      "generated_sql": "SELECT * FROM retailers WHERE retailer_type = 'hotel' LIMIT 200"
     },
     {
       "id": "select_04",
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=10, ref_rows=10, match=True",
-      "latency": 27.28,
+      "latency": 12.06,
       "generated_sql": "SELECT name, unit_price, bottle_size_ml FROM products WHERE category = 'energy' LIMIT 200"
     },
     {
       "id": "select_05",
       "category": "simple_select",
       "passed": true,
-      "detail": "agent_rows=200, ref_rows=637, match=False [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 835.86,
+      "detail": "agent_rows=200, ref_rows=200, match=True",
+      "latency": 32.44,
       "generated_sql": "SELECT id FROM orders WHERE status = 'pending' LIMIT 200"
     },
     {
@@ -45,7 +46,7 @@
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=8, ref_rows=8, match=True",
-      "latency": 34.45,
+      "latency": 26.81,
       "generated_sql": "SELECT name, unit_price FROM products WHERE unit_price > 50 LIMIT 200"
     },
     {
@@ -53,15 +54,15 @@
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=17, ref_rows=17, match=True",
-      "latency": 36.05,
-      "generated_sql": "SELECT name, town, district, retailer_type, credit_limit FROM retailers WHERE credit_limit > 50000 LIMIT 200"
+      "latency": 31.3,
+      "generated_sql": "SELECT id, name, town, district, retailer_type, credit_limit FROM retailers WHERE credit_limit > 50000 LIMIT 200"
     },
     {
       "id": "select_08",
       "category": "simple_select",
       "passed": true,
-      "detail": "agent_rows=200, ref_rows=847, match=False [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 34.37,
+      "detail": "agent_rows=200, ref_rows=200, match=True",
+      "latency": 36.47,
       "generated_sql": "SELECT id FROM orders WHERE status = 'cancelled' LIMIT 200"
     },
     {
@@ -69,7 +70,7 @@
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=10, ref_rows=10, match=True",
-      "latency": 29.04,
+      "latency": 27.13,
       "generated_sql": "SELECT name, unit_price, bottle_size_ml FROM products WHERE category = 'water' LIMIT 200"
     },
     {
@@ -77,23 +78,23 @@
       "category": "simple_select",
       "passed": true,
       "detail": "agent_rows=14, ref_rows=14, match=True",
-      "latency": 37.19,
-      "generated_sql": "SELECT * FROM retailers WHERE town = 'Ratnagiri' LIMIT 200"
+      "latency": 32.51,
+      "generated_sql": "SELECT id, name, town, district, retailer_type, credit_limit FROM retailers WHERE town = 'Ratnagiri' LIMIT 200"
     },
     {
       "id": "join_01",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 31.06,
-      "generated_sql": "SELECT r.name FROM retailers AS r JOIN orders AS o ON r.id = o.retailer_id WHERE o.id = 1 LIMIT 200"
+      "latency": 25.16,
+      "generated_sql": "SELECT r.id, r.name, r.town, r.district, r.retailer_type, r.credit_limit FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id WHERE o.id = 1 LIMIT 200"
     },
     {
       "id": "join_02",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=5, ref_rows=5, match=True",
-      "latency": 33.71,
+      "latency": 26.35,
       "generated_sql": "SELECT p.name, oi.quantity, oi.unit_price FROM order_items AS oi JOIN products AS p ON oi.product_id = p.id WHERE oi.order_id = 1 LIMIT 200"
     },
     {
@@ -101,55 +102,55 @@
       "category": "join",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 27.39,
-      "generated_sql": "SELECT r.town FROM retailers AS r JOIN orders AS o ON r.id = o.retailer_id WHERE o.id = 42 LIMIT 200"
+      "latency": 24.78,
+      "generated_sql": "SELECT r.town FROM retailers AS r JOIN orders AS o ON o.retailer_id = r.id WHERE o.id = 42 LIMIT 200"
     },
     {
       "id": "join_04",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=4, ref_rows=4, match=True",
-      "latency": 25.35,
-      "generated_sql": "SELECT DISTINCT p.name, p.category FROM products AS p JOIN order_items AS oi ON p.id = oi.product_id WHERE oi.order_id = 5 LIMIT 200"
+      "latency": 28.79,
+      "generated_sql": "SELECT p.name, p.category FROM order_items AS oi JOIN products AS p ON oi.product_id = p.id WHERE oi.order_id = 5 LIMIT 200"
     },
     {
       "id": "join_05",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 36.96,
-      "generated_sql": "SELECT stock_quantity FROM inventory WHERE product_id = (SELECT id FROM products WHERE name = 'Ratna Cola Classic') LIMIT 200"
+      "latency": 25.84,
+      "generated_sql": "SELECT i.stock_quantity FROM inventory AS i JOIN products AS p ON i.product_id = p.id WHERE p.name = 'Ratna Cola Classic' LIMIT 200"
     },
     {
       "id": "join_06",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 30.65,
-      "generated_sql": "SELECT r.name AS retailer_name, o.status FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id WHERE o.id = 20 LIMIT 200"
+      "latency": 20.62,
+      "generated_sql": "SELECT r.name, o.status FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id WHERE o.id = 20 LIMIT 200"
     },
     {
       "id": "join_07",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 44.88,
-      "generated_sql": "SELECT last_restocked FROM inventory WHERE product_id = (SELECT id FROM products WHERE name = 'Ratna Mango Juice') LIMIT 200"
+      "latency": 16.21,
+      "generated_sql": "SELECT i.last_restocked FROM inventory AS i JOIN products AS p ON i.product_id = p.id WHERE p.name = 'Ratna Mango Juice' LIMIT 200"
     },
     {
       "id": "join_08",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=3, ref_rows=3, match=True",
-      "latency": 33.98,
-      "generated_sql": "SELECT p.name, oi.quantity FROM products AS p JOIN order_items AS oi ON p.id = oi.product_id WHERE oi.order_id = 100 LIMIT 200"
+      "latency": 24.19,
+      "generated_sql": "SELECT p.name, oi.quantity FROM order_items AS oi JOIN products AS p ON oi.product_id = p.id WHERE oi.order_id = 100 LIMIT 200"
     },
     {
       "id": "join_09",
       "category": "join",
       "passed": true,
       "detail": "agent_rows=0, ref_rows=0, match=True",
-      "latency": 39.98,
+      "latency": 21.75,
       "generated_sql": "SELECT DISTINCT method FROM payments WHERE order_id = 1 LIMIT 200"
     },
     {
@@ -157,7 +158,7 @@
       "category": "join",
       "passed": true,
       "detail": "agent_rows=50, ref_rows=50, match=True",
-      "latency": 45.77,
+      "latency": 28.06,
       "generated_sql": "SELECT o.id, o.order_date, o.delivery_date, o.status, o.total_amount FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id WHERE r.name = 'Lanja General Store 1' LIMIT 200"
     },
     {
@@ -165,15 +166,15 @@
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 28.23,
-      "generated_sql": "SELECT COUNT(*) AS product_count FROM products LIMIT 200"
+      "latency": 131.13,
+      "generated_sql": "SELECT COUNT(*) AS total_products FROM products LIMIT 200"
     },
     {
       "id": "agg_02",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 36.89,
+      "latency": 128.73,
       "generated_sql": "SELECT COUNT(*) AS total_retailers FROM retailers LIMIT 200"
     },
     {
@@ -181,7 +182,7 @@
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 30.57,
+      "latency": 6.26,
       "generated_sql": "SELECT COUNT(*) AS cancelled_orders FROM orders WHERE status = 'cancelled' LIMIT 200"
     },
     {
@@ -189,7 +190,7 @@
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 44.41,
+      "latency": 5.15,
       "generated_sql": "SELECT AVG(unit_price) AS avg_unit_price FROM products WHERE category = 'cola' LIMIT 200"
     },
     {
@@ -197,47 +198,47 @@
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 43.85,
-      "generated_sql": "SELECT SUM(total_amount) AS total_value FROM orders WHERE status = 'delivered' LIMIT 200"
+      "latency": 5.23,
+      "generated_sql": "SELECT SUM(total_amount) AS total_delivered_value FROM orders WHERE status = 'delivered' LIMIT 200"
     },
     {
       "id": "agg_06",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=10, ref_rows=10, match=True",
-      "latency": 38.06,
-      "generated_sql": "SELECT town, COUNT(*) AS retailer_count FROM retailers GROUP BY town LIMIT 200"
+      "latency": 20.12,
+      "generated_sql": "SELECT town, COUNT(*) AS retailer_count FROM retailers GROUP BY town ORDER BY town LIMIT 200"
     },
     {
       "id": "agg_07",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 34.45,
-      "generated_sql": "SELECT AVG(total_amount) AS average_order_total FROM orders LIMIT 200"
+      "latency": 26.32,
+      "generated_sql": "SELECT AVG(total_amount) AS avg_order_total FROM orders LIMIT 200"
     },
     {
       "id": "agg_08",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=3, ref_rows=3, match=True",
-      "latency": 37.85,
-      "generated_sql": "SELECT r.retailer_type, COUNT(o.id) AS order_count FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id GROUP BY r.retailer_type LIMIT 200"
+      "latency": 25.69,
+      "generated_sql": "SELECT r.retailer_type, COUNT(*) AS order_count FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id GROUP BY r.retailer_type LIMIT 200"
     },
     {
       "id": "agg_09",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 33.12,
-      "generated_sql": "SELECT MAX(unit_price) FROM products LIMIT 200"
+      "latency": 20.56,
+      "generated_sql": "SELECT MAX(unit_price) AS max_price FROM products LIMIT 200"
     },
     {
       "id": "agg_10",
       "category": "aggregation",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 33.06,
+      "latency": 24.88,
       "generated_sql": "SELECT SUM(quantity) AS total_quantity FROM order_items WHERE product_id = 1 LIMIT 200"
     },
     {
@@ -245,215 +246,214 @@
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 42.6,
+      "latency": 22.94,
       "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y-%m', order_date) = '2025-03' LIMIT 200"
     },
     {
       "id": "time_02",
       "category": "time_based",
       "passed": true,
-      "detail": "no execution_result; error=None [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 23.11,
-      "generated_sql": "SELECT SUM(total_amount) AS total_revenue FROM orders WHERE strftime('%Y', order_date) = '2024';"
+      "detail": "agent_rows=1, ref_rows=1, match=True",
+      "latency": 24.53,
+      "generated_sql": "SELECT SUM(total_amount) AS total_order_value FROM orders WHERE STRFTIME('%Y', order_date) = '2024' LIMIT 200"
     },
     {
       "id": "time_03",
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 48.42,
-      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y-%m', order_date) BETWEEN '2025-07' AND '2025-09' LIMIT 200"
+      "latency": 24.91,
+      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y', order_date) = '2025' AND STRFTIME('%m', order_date) IN ('07', '08', '09') LIMIT 200"
     },
     {
       "id": "time_04",
       "category": "time_based",
-      "passed": true,
-      "detail": "agent_rows=12, ref_rows=12, match=True",
-      "latency": 47.67,
-      "generated_sql": "SELECT STRFTIME('%Y-%m', order_date) AS month, COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y', order_date) = '2024' GROUP BY month ORDER BY month LIMIT 200"
+      "passed": false,
+      "detail": "agent raised: All deployments for alias='chat' failed. Last error: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-20b` in organization `org_01jw2y3dr8en1anwmmztn48n7k` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7067, Requested 947. Please try again in 105ms. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}",
+      "latency": 4.34
     },
     {
       "id": "time_05",
       "category": "time_based",
       "passed": true,
-      "detail": "no execution_result; error=None [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 24.72,
-      "generated_sql": "SELECT SUM(total_amount) AS total_revenue FROM orders WHERE strftime('%Y-%m', order_date) = '2025-06';"
+      "detail": "agent_rows=1, ref_rows=1, match=True",
+      "latency": 430.45,
+      "generated_sql": "SELECT SUM(total_amount) AS total_order_value FROM orders WHERE STRFTIME('%Y-%m', order_date) = '2025-06' LIMIT 200"
     },
     {
       "id": "time_06",
       "category": "time_based",
       "passed": true,
-      "detail": "no execution_result; error=None [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 26.28,
-      "generated_sql": "SELECT COUNT(*) AS delivered_orders FROM orders WHERE strftime('%Y', order_date) = '2025' AND status = 'delivered';"
+      "detail": "agent_rows=1, ref_rows=1, match=True",
+      "latency": 34.99,
+      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE status = 'delivered' AND STRFTIME('%Y', order_date) = '2025' LIMIT 200"
     },
     {
       "id": "time_07",
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 42.27,
-      "generated_sql": "SELECT (COUNT(*) FILTER(WHERE STRFTIME('%m', order_date) = '03') - COUNT(*) FILTER(WHERE STRFTIME('%m', order_date) = '08')) AS order_difference FROM orders WHERE STRFTIME('%Y', order_date) = '2025' LIMIT 200"
+      "latency": 25.33,
+      "generated_sql": "SELECT (SELECT COUNT(*) FROM orders WHERE STRFTIME('%Y-%m', order_date) = '2025-03') - (SELECT COUNT(*) FROM orders WHERE STRFTIME('%Y-%m', order_date) = '2025-08') AS more_orders_in_march LIMIT 200"
     },
     {
       "id": "time_08",
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 36.14,
-      "generated_sql": "SELECT MIN(order_date) FROM orders LIMIT 200"
+      "latency": 23.07,
+      "generated_sql": "SELECT MIN(order_date) AS earliest_order_date FROM orders LIMIT 200"
     },
     {
       "id": "time_09",
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 31.77,
-      "generated_sql": "SELECT MAX(order_date) FROM orders LIMIT 200"
+      "latency": 256.04,
+      "generated_sql": "SELECT MAX(order_date) AS most_recent_order_date FROM orders LIMIT 200"
     },
     {
       "id": "time_10",
       "category": "time_based",
       "passed": true,
       "detail": "agent_rows=1, ref_rows=1, match=True",
-      "latency": 40.95,
-      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y-%m', order_date) BETWEEN '2024-03' AND '2024-06' LIMIT 200"
+      "latency": 5.96,
+      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y', order_date) = '2024' AND STRFTIME('%m', order_date) IN ('03', '04', '05', '06') LIMIT 200"
     },
     {
       "id": "followup_01",
       "category": "followup",
-      "passed": true,
-      "detail": "agent_rows=3, ref_rows=3, match=True",
-      "latency": 68.57,
-      "generated_sql": "SELECT p.name, SUM(oi.quantity * oi.unit_price) AS total_revenue FROM order_items AS oi JOIN products AS p ON oi.product_id = p.id WHERE p.category = 'juice' GROUP BY p.id, p.name ORDER BY total_revenue DESC LIMIT 3"
+      "passed": false,
+      "detail": "agent_rows=10, ref_rows=3, match=False",
+      "latency": 15.11,
+      "generated_sql": "SELECT name, unit_price, bottle_size_ml FROM products WHERE category = 'juice' LIMIT 200"
     },
     {
       "id": "followup_02",
       "category": "followup",
       "passed": true,
-      "detail": "agent_rows=1, ref_rows=1, match=False [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 59.98,
-      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE retailer_id = 6 LIMIT 200;"
+      "detail": "agent_rows=1, ref_rows=1, match=True",
+      "latency": 51.35,
+      "generated_sql": "SELECT COUNT(*) AS order_count FROM orders WHERE retailer_id = 6 LIMIT 200"
     },
     {
       "id": "followup_03",
       "category": "followup",
       "passed": true,
-      "detail": "agent_rows=12, ref_rows=1, match=False [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 71.0,
-      "generated_sql": "SELECT STRFTIME('%Y-%m', order_date) AS month, COUNT(*) AS order_count FROM orders WHERE STRFTIME('%Y', order_date) = '2024' GROUP BY month ORDER BY month LIMIT 200"
+      "detail": "agent_rows=1, ref_rows=1, match=True",
+      "latency": 41.29,
+      "generated_sql": "SELECT SUM(total_amount) AS total_order_value FROM orders WHERE STRFTIME('%Y', order_date) = '2024' LIMIT 200"
     },
     {
       "id": "followup_04",
       "category": "followup",
       "passed": true,
       "detail": "agent_rows=15, ref_rows=15, match=True",
-      "latency": 75.59,
-      "generated_sql": "SELECT name, retailer_type, credit_limit FROM retailers WHERE town = 'Khed' LIMIT 200"
+      "latency": 57.34,
+      "generated_sql": "SELECT id, name, town, district, retailer_type, credit_limit FROM retailers WHERE town = 'Khed' LIMIT 200"
     },
     {
       "id": "followup_05",
       "category": "followup",
       "passed": true,
-      "detail": "agent_rows=5, ref_rows=10, match=False [corrected after fixing eval reference_sql / ambiguity_check context bug, re-verified]",
-      "latency": 71.37,
-      "generated_sql": "SELECT r.town, SUM(o.total_amount) AS total_value FROM orders o JOIN retailers r ON o.retailer_id = r.id WHERE o.status = 'delivered' GROUP BY r.town ORDER BY total_value DESC;"
+      "detail": "agent_rows=10, ref_rows=10, match=True",
+      "latency": 52.16,
+      "generated_sql": "SELECT r.town, SUM(o.total_amount) AS total_value FROM orders AS o JOIN retailers AS r ON o.retailer_id = r.id WHERE o.status = 'delivered' GROUP BY r.town ORDER BY total_value DESC LIMIT 200"
     },
     {
       "id": "manip_01",
       "category": "manipulation",
-      "passed": true,
-      "detail": "interrupted=True, preview_row_count=1, expected_count=1",
-      "latency": 25.06,
-      "generated_sql": "DELETE FROM orders WHERE id = 500;"
+      "passed": false,
+      "detail": "interrupted=False, preview_row_count=None",
+      "generated_sql": "DELETE FROM orders WHERE id = 500;",
+      "latency": 14.07
     },
     {
       "id": "manip_02",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=1, expected_count=1",
-      "latency": 24.88,
-      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE id = 42;"
+      "detail": "interrupted=True, preview_row_count=1, expected_count=1, committed=True, final_response='Done - 1 row(s) affected in orders.'",
+      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE id = 42;",
+      "latency": 8.54
     },
     {
       "id": "manip_03",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=0, expected_count=0",
-      "latency": 27.18,
-      "generated_sql": "DELETE FROM orders WHERE id = 9999;"
+      "detail": "interrupted=True, preview_row_count=0, expected_count=0, committed=True, final_response='Done - 0 row(s) affected in orders.', post_commit_reference_count=0",
+      "generated_sql": "DELETE FROM orders WHERE id = 9999;",
+      "latency": 8.11
     },
     {
       "id": "manip_04",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=1",
-      "latency": 30.34,
-      "generated_sql": "INSERT INTO payments (order_id, payment_date, amount, method) VALUES (3, date('now'), 100, 'cash');"
+      "detail": "interrupted=True, preview_row_count=1, committed=True, final_response='Done - 1 row(s) affected in payments.'",
+      "generated_sql": "INSERT INTO payments (order_id, payment_date, amount, method) VALUES (3, date('now'), 100, 'cash');",
+      "latency": 20.15
     },
     {
       "id": "manip_05",
       "category": "manipulation",
       "passed": true,
       "detail": "error='This would affect 637 rows, which exceeds the safety limit of 50. Please narrow your request (e.g. add more specific conditions).', interrupted=False",
-      "latency": 25.7,
-      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE status = 'pending';"
+      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE status = 'pending';",
+      "latency": 7.1
     },
     {
       "id": "manip_06",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=1, expected_count=1",
-      "latency": 23.53,
-      "generated_sql": "UPDATE orders SET status = 'delivered' WHERE id = 10;"
+      "detail": "interrupted=True, preview_row_count=1, expected_count=1, committed=True, final_response='Done - 1 row(s) affected in orders.'",
+      "generated_sql": "UPDATE orders SET status = 'delivered' WHERE id = 10;",
+      "latency": 18.42
     },
     {
       "id": "manip_07",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=5, expected_count=5",
-      "latency": 17.89,
-      "generated_sql": "DELETE FROM order_items WHERE order_id = 1;"
+      "detail": "interrupted=True, preview_row_count=5, expected_count=5, committed=True, final_response='Done - 5 row(s) affected in order_items.', post_commit_reference_count=0",
+      "generated_sql": "DELETE FROM order_items WHERE order_id = 1;",
+      "latency": 6.29
     },
     {
       "id": "manip_08",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=0, expected_count=0",
-      "latency": 22.98,
-      "generated_sql": "DELETE FROM retailers WHERE id = 200;"
+      "detail": "interrupted=True, preview_row_count=0, expected_count=0, committed=True, final_response='Done - 0 row(s) affected in retailers.', post_commit_reference_count=0",
+      "generated_sql": "DELETE FROM retailers WHERE id = 200;",
+      "latency": 18.32
     },
     {
       "id": "manip_09",
       "category": "manipulation",
       "passed": true,
-      "detail": "interrupted=True, preview_row_count=1, expected_count=1",
-      "latency": 21.76,
-      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE id = 88;"
+      "detail": "interrupted=True, preview_row_count=1, expected_count=1, committed=True, final_response='Done - 1 row(s) affected in orders.'",
+      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE id = 88;",
+      "latency": 5.04
     },
     {
       "id": "manip_10",
       "category": "manipulation",
-      "passed": true,
-      "detail": "interrupted=True, preview_row_count=1, expected_count=1",
-      "latency": 24.94,
-      "generated_sql": "DELETE FROM orders WHERE id = 15;"
+      "passed": false,
+      "detail": "interrupted=False, preview_row_count=None",
+      "generated_sql": "DELETE FROM orders WHERE id = 15;",
+      "latency": 17.86
     },
     {
       "id": "ambig_01",
       "category": "ambiguous",
       "passed": true,
       "detail": "is_ambiguous=True",
-      "latency": 22.59,
-      "generated_sql": "INSERT INTO payments (order_id, payment_date, amount, method) SELECT id, date('now'), total_amount, 'cash' FROM orders WHERE id = 88;"
+      "latency": 5.47,
+      "generated_sql": "WITH unpaid AS (SELECT o.id, o.order_date, o.total_amount - COALESCE(SUM(p.amount), 0) AS due FROM orders o LEFT JOIN payments p ON p.order_id = o.id WHERE o.status = 'delivered' GROUP BY o.id, o.total_amount, o.order_date HAVING due > 0) INSERT INTO payments (order_id, payment_date, amount, method) SELECT id, date('now'), due, 'cash' FROM unpaid ORDER BY order_date DESC LIMIT 1;"
     },
     {
       "id": "ambig_02",
       "category": "ambiguous",
       "passed": true,
       "detail": "is_ambiguous=True",
-      "latency": 27.37,
+      "latency": 8.69,
       "generated_sql": "DELETE FROM orders WHERE order_date < date((SELECT MAX(order_date) FROM orders), '-1 year');"
     },
     {
@@ -461,62 +461,177 @@
       "category": "ambiguous",
       "passed": true,
       "detail": "is_ambiguous=True",
-      "latency": 29.44,
-      "generated_sql": "UPDATE retailers SET credit_limit = credit_limit * 0.95 WHERE id = 5;"
+      "latency": 12.45,
+      "generated_sql": "UPDATE retailers SET credit_limit = credit_limit * 0.9 WHERE id = 5;"
     },
     {
       "id": "ambig_04",
       "category": "ambiguous",
       "passed": true,
       "detail": "is_ambiguous=True",
-      "latency": 26.84,
-      "generated_sql": "UPDATE order_items SET unit_price = 12.99 WHERE product_id = 23;"
+      "latency": 18.26,
+      "generated_sql": "UPDATE products SET unit_price = 40.00 WHERE id = 1;"
     },
     {
       "id": "ambig_05",
       "category": "ambiguous",
       "passed": true,
       "detail": "is_ambiguous=True",
-      "latency": 27.8,
-      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE order_date >= date((SELECT MAX(order_date) FROM orders));"
+      "latency": 7.64,
+      "generated_sql": "UPDATE orders SET status = 'cancelled' WHERE order_date = (SELECT MAX(order_date) FROM orders) AND status <> 'cancelled';"
+    },
+    {
+      "id": "guard_01",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=True, expected=True",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_02",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=True, expected=True",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_03",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=True, expected=True",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_04",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=True, expected=True",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_05",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=False, expected=False",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_06",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=False, expected=False",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_07",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=False, expected=False",
+      "latency": 0.0
+    },
+    {
+      "id": "guard_08",
+      "category": "guardrail",
+      "passed": true,
+      "detail": "blocked=False, expected=False",
+      "latency": 0.0
     }
   ],
   "scorecard": {
-    "simple_select": {
-      "passed": 10,
-      "total": 10,
-      "pct": 100.0
-    },
-    "join": {
-      "passed": 10,
-      "total": 10,
-      "pct": 100.0
-    },
     "aggregation": {
       "passed": 10,
       "total": 10,
-      "pct": 100.0
-    },
-    "time_based": {
-      "passed": 10,
-      "total": 10,
-      "pct": 100.0
-    },
-    "followup": {
-      "passed": 5,
-      "total": 5,
-      "pct": 100.0
-    },
-    "manipulation": {
-      "passed": 10,
-      "total": 10,
-      "pct": 100.0
+      "pct": 100.0,
+      "ci_95": {
+        "point_estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
     },
     "ambiguous": {
       "passed": 5,
       "total": 5,
-      "pct": 100.0
+      "pct": 100.0,
+      "ci_95": {
+        "point_estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "followup": {
+      "passed": 4,
+      "total": 5,
+      "pct": 80.0,
+      "ci_95": {
+        "point_estimate": 0.8,
+        "lower": 0.4,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "guardrail": {
+      "passed": 8,
+      "total": 8,
+      "pct": 100.0,
+      "ci_95": {
+        "point_estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "join": {
+      "passed": 10,
+      "total": 10,
+      "pct": 100.0,
+      "ci_95": {
+        "point_estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "manipulation": {
+      "passed": 8,
+      "total": 10,
+      "pct": 80.0,
+      "ci_95": {
+        "point_estimate": 0.8,
+        "lower": 0.5,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "simple_select": {
+      "passed": 10,
+      "total": 10,
+      "pct": 100.0,
+      "ci_95": {
+        "point_estimate": 1.0,
+        "lower": 1.0,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
+    },
+    "time_based": {
+      "passed": 9,
+      "total": 10,
+      "pct": 90.0,
+      "ci_95": {
+        "point_estimate": 0.9,
+        "lower": 0.7,
+        "upper": 1.0,
+        "confidence": 0.95
+      }
     }
   },
-  "overall_pct": 100.0
+  "execution_accuracy_pct": 93.3,
+  "guardrail_correctness_pct": 100.0,
+  "latency": {
+    "mean": 35.86,
+    "p50": 20.62,
+    "p95": 131.13
+  }
 }

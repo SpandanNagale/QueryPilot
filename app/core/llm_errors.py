@@ -19,6 +19,19 @@ class LLMConfigError(RuntimeError):
     """A configured deployment is missing required config (e.g. an API key)."""
 
 
+class EmptyProviderResponseError(RuntimeError):
+    """An OpenAI-compatible provider (OpenRouter/Groq) returned a response
+    with no `choices` -- observed live and repeatedly against free-tier
+    fallback models (e.g. openrouter's nvidia/nemotron-3-super-120b-a12b:free),
+    which sometimes return a well-formed-but-empty completion instead of an
+    HTTP error the openai SDK would otherwise raise for. Without this, the
+    raw `response.choices[0]` TypeError was an unrecognized exception shape
+    to classify_exception(), which defaults unrecognized shapes to
+    NO_ADVANCE ("fail loudly rather than silently cycle") -- exactly wrong
+    here, since this is a deployment-specific hiccup, not a malformed
+    request that would fail identically on every deployment."""
+
+
 class AllProvidersFailedError(RuntimeError):
     """Every deployment in an alias's chain failed. `last_error` is the most
     recent underlying exception, for server-side logging only -- Phase 3
@@ -79,6 +92,8 @@ def _is_timeout_or_connection_error(exc: Exception) -> bool:
 
 
 def classify_exception(exc: Exception) -> FallbackAction:
+    if isinstance(exc, EmptyProviderResponseError):
+        return FallbackAction.ADVANCE_IMMEDIATELY
     if isinstance(exc, (openai.BadRequestError, openai.UnprocessableEntityError)):
         return FallbackAction.NO_ADVANCE
     if _is_timeout_or_connection_error(exc):

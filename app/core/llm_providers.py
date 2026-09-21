@@ -22,7 +22,7 @@ import openai
 import ollama
 
 from app.config import provider_credentials, settings
-from app.core.llm_errors import LLMConfigError
+from app.core.llm_errors import EmptyProviderResponseError, LLMConfigError
 
 StructuredMode = Literal["native_schema", "json_mode", "none"]
 
@@ -105,11 +105,15 @@ def _build_openai_compatible(provider_key: str, model: str, base_url: str, api_k
         response = client.chat.completions.create(
             model=model, messages=messages, temperature=temperature, response_format=response_format
         )
+        if not response.choices:
+            raise EmptyProviderResponseError(f"{provider_key}:{model} returned a response with no choices.")
         return response.choices[0].message.content, _openai_usage(response)
 
     def _stream(*, messages, temperature):
         stream = client.chat.completions.create(model=model, messages=messages, temperature=temperature, stream=True)
         for chunk in stream:
+            if not chunk.choices:  # some providers send a keep-alive/usage-only chunk with no choices
+                continue
             content = chunk.choices[0].delta.content
             if content:
                 yield content

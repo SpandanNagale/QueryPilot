@@ -1,0 +1,79 @@
+name: Eval
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# So the eval harness's own commit back to main (below) doesn't retrigger
+# an overlapping run on top of one already updating the same files.
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Needed to git push evals/eval_results.json + evals/SUMMARY.md back to
+    # the repo at the end of the job.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Seed the template database
+        run: python -m scripts.seed_db
+
+      - name: Run database migrations
+        # QP_DATABASE_URL is deliberately left unset here -- CI never talks
+        # to the production Neon database. This creates the operational
+        # storage (audit_events/budget_entries) as a local SQLite file
+        # instead (app/config.py's resolved_database_url fallback), which
+        # the graph's audit-logging nodes (schema_retriever, dry_run_preview,
+        # transactional_executor, audit_logger) need to exist before an eval
+        # case that exercises them can run without an OperationalError.
+        run: alembic upgrade head
+
+      - name: Run pytest
+        run: pytest -q
+
+      - name: Run eval harness
+        id: eval
+        env:
+          # Real provider calls -- config/model_groups.yaml's cloud fallback
+          # chain, same as production. No QP_LLM_PROFILE override, so
+          # ollama_local is never selected.
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        # Non-zero exit (a detected regression) is handled by the two steps
+        # below, not here -- the results/summary still need to be committed
+        # even when this run regressed, so the failure is visible in the
+        # historical record rather than silently discarded.
+        continue-on-error: true
+        run: python -m evals.run_evals
+
+      - name: Commit eval results
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add evals/eval_results.json evals/SUMMARY.md
+          git diff --cached --quiet || git commit -m "chore(evals): update eval results [skip ci]"
+          git push
+
+      - name: Fail the job if the eval harness detected a regression
+        if: steps.eval.outcome == 'failure'
+        run: |
+          echo "Eval harness detected a regression -- see evals/SUMMARY.md for details."
+          exit 1

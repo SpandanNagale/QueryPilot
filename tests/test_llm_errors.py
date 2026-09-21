@@ -86,6 +86,13 @@ def test_unrecognized_exception_never_advances():
     assert classify_exception(ValueError("something unrelated")) is FallbackAction.NO_ADVANCE
 
 
+def test_empty_provider_response_advances_immediately():
+    from app.core.llm_errors import EmptyProviderResponseError
+
+    exc = EmptyProviderResponseError("openrouter:some/free-model returned a response with no choices.")
+    assert classify_exception(exc) is FallbackAction.ADVANCE_IMMEDIATELY
+
+
 def test_all_providers_failed_error_carries_alias_and_last_error():
     from app.core.llm_errors import AllProvidersFailedError
 

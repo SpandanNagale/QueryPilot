@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import provider_credentials
-from app.core.llm_errors import LLMConfigError
+from app.core.llm_errors import EmptyProviderResponseError, LLMConfigError
 from app.core.llm_providers import build_groq, build_ollama_cloud, build_ollama_local, build_openrouter
 
 
@@ -96,6 +96,38 @@ def test_openrouter_call_without_format_omits_response_format(monkeypatch):
 
         call_kwargs = MockClient.return_value.chat.completions.create.call_args.kwargs
         assert call_kwargs["response_format"] is None
+
+
+def test_openrouter_call_with_no_choices_raises_empty_provider_response_error(monkeypatch):
+    """Live-verified regression: a free-tier fallback model can return a
+    well-formed response with response.choices=None (observed repeatedly
+    against openrouter's nvidia/nemotron-3-super-120b-a12b:free) instead of
+    an HTTP error the openai SDK would raise for. Before this fix, indexing
+    response.choices[0] raised a raw, unclassified TypeError that aborted
+    the entire fallback chain (app.core.llm_errors.classify_exception's
+    NO_ADVANCE default) instead of advancing to the next deployment."""
+    monkeypatch.setattr(provider_credentials, "openrouter_api_key", "test-key")
+    with patch("app.core.llm_providers.openai.OpenAI") as MockClient:
+        response = MagicMock()
+        response.choices = None
+        MockClient.return_value.chat.completions.create.return_value = response
+
+        deployment = build_openrouter("some/free-model")
+        with pytest.raises(EmptyProviderResponseError):
+            deployment.call(messages=[{"role": "user", "content": "hey"}], temperature=0.0)
+
+
+def test_openrouter_stream_skips_chunks_with_no_choices(monkeypatch):
+    monkeypatch.setattr(provider_credentials, "openrouter_api_key", "test-key")
+    with patch("app.core.llm_providers.openai.OpenAI") as MockClient:
+        chunk1 = MagicMock(choices=[MagicMock(delta=MagicMock(content="he"))])
+        keepalive_chunk = MagicMock(choices=None)
+        chunk2 = MagicMock(choices=[MagicMock(delta=MagicMock(content="llo"))])
+        MockClient.return_value.chat.completions.create.return_value = iter([chunk1, keepalive_chunk, chunk2])
+
+        deployment = build_openrouter("some/free-model")
+        chunks = list(deployment.stream(messages=[{"role": "user", "content": "hey"}], temperature=0.0))
+        assert chunks == ["he", "llo"]
 
 
 def test_groq_requires_api_key(monkeypatch):
