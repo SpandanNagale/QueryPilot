@@ -1,0 +1,66 @@
+name: Frontend tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["web/**", ".github/workflows/frontend-tests.yml"]
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Seed the template database
+        run: python -m scripts.seed_db
+
+      - name: Run database migrations
+        # QP_DATABASE_URL unset -- local SQLite fallback, same reasoning as
+        # .github/workflows/eval.yml (CI never touches the production Neon DB).
+        run: alembic upgrade head
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the frontend
+        working-directory: web
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+
+      - name: Run Playwright smoke tests
+        working-directory: web
+        run: npx playwright test
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+          CI: true
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 14

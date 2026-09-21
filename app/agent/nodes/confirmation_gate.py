@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
 from app.agent.state import AgentState
+from app.config import settings
 from app.core.audit import log_event
 
 _AFFIRMATIVE = {"yes", "y", "confirm", "confirmed", "true", "ok", "okay", "go", "do it"}
@@ -32,6 +33,9 @@ def confirmation_gate_node(state: AgentState, config: RunnableConfig) -> dict:
             "preview": state["preview"],
             "generated_sql": state["generated_sql"],
             "message": "Please confirm to proceed (yes/no). Anything other than yes cancels.",
+            # So the frontend's countdown matches the real configured value
+            # (QP_CONFIRMATION_TIMEOUT_SECONDS) instead of guessing/hardcoding it.
+            "confirmation_timeout_seconds": settings.confirmation_timeout_seconds,
         }
     )
     confirmed = _interpret_answer(answer)

@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/*
+ * Control-room telemetry palette, copied from the sibling
+ * Crewai-Research-pipeline repo's dashboard (same semantic tokens, same
+ * dark-first theme) so QueryPilot's demo reads as one family of tools:
+ * dark, restrained, teal/amber/coral as the only saturated colors and each
+ * one semantic (never decorative). No purple gradients, no "AI-powered"
+ * chrome.
+ */
+:root {
+  --surface-0: #0a0d12;
+  --surface-1: #12161d;
+  --surface-2: #1a1f28;
+  --border-0: #262c37;
+  --border-1: #333b48;
+  --ink-0: #e7ebf1;
+  --ink-1: #aab2c0;
+  --ink-2: #6b7688;
+
+  --teal: #2dd4bf;
+  --teal-dim: #1a4d47;
+  --amber: #f2b94e;
+  --amber-dim: #4d3f1f;
+  --coral: #f2685c;
+  --coral-dim: #4d2621;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-border-0: var(--border-0);
+  --color-border-1: var(--border-1);
+  --color-ink-0: var(--ink-0);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+
+  --color-teal: var(--teal);
+  --color-teal-dim: var(--teal-dim);
+  --color-amber: var(--amber);
+  --color-amber-dim: var(--amber-dim);
+  --color-coral: var(--coral);
+  --color-coral-dim: var(--coral-dim);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--ink-0);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.font-telemetry {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+::selection {
+  background: var(--teal-dim);
+  color: var(--ink-0);
+}
+
+/* Streamed insight text (insight_summarizer's `token` events) is plain
+   prose, not markdown -- preserve the model's own line breaks only. */
+.prose-insight {
+  white-space: pre-wrap;
+}
+
+@keyframes qp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.animate-qp-pulse {
+  animation: qp-pulse 1.4s ease-in-out infinite;
+}
