@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from langchain_core.runnables import RunnableConfig
 from sqlalchemy.exc import IntegrityError
 
@@ -7,6 +9,8 @@ from app.agent.state import AgentState
 from app.core import executor as sql_executor
 from app.core.db import get_engines
 from app.core.validator import check_row_impact, validate_sql
+
+logger = logging.getLogger(__name__)
 
 
 def transactional_executor_node(state: AgentState, config: RunnableConfig) -> dict:
@@ -31,7 +35,13 @@ def transactional_executor_node(state: AgentState, config: RunnableConfig) -> di
         reason = "a foreign key constraint failed - other rows still reference the ones being changed"
         return {"error": reason, "final_response": f"The change failed and was rolled back: {reason}."}
     except Exception as exc:  # noqa: BLE001 - must ROLLBACK and report, whatever the cause
-        return {"error": str(exc), "final_response": f"The change failed and was rolled back: {exc}"}
+        logger.warning("transactional_executor DB error (sql=%r): %s", sql, exc)
+        reason = "an unexpected database error occurred"
+        return {
+            "error": f"execution failed: {exc}",
+            "client_error": reason,
+            "final_response": f"The change failed and was rolled back: {reason}.",
+        }
 
     return {
         "execution_result": {

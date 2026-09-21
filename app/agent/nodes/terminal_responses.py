@@ -32,7 +32,7 @@ def ask_clarifying_question_node(state: AgentState) -> dict:
 
 
 def error_response_node(state: AgentState) -> dict:
-    reason = (state.get("error") or "an unexpected error occurred").rstrip(". ")
+    reason = (state.get("client_error") or state.get("error") or "an unexpected error occurred").rstrip(". ")
     # Guardrail messages (e.g. the row-impact ceiling) already tell the user
     # exactly what to do next - don't tack on a generic "please rephrase"
     # that would just repeat the same ask in different words.

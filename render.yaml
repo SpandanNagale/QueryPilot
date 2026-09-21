@@ -20,6 +20,14 @@ services:
         value: "200"
       - key: QP_LLM_PROFILE
         value: "cloud"
+      - key: QP_GUARDRAIL_MAX_INPUT_CHARS
+        value: "2000"
+      - key: QP_RATE_LIMIT_PER_MINUTE
+        value: "10"
+      - key: QP_DAILY_BUDGET_USD
+        value: "2.0"
+      - key: QP_LLM_CACHE_ENABLED
+        value: "true"
       - key: QP_CORS_ALLOWED_ORIGINS
         sync: false
       # Accepts Neon's bare "postgresql://" connection string directly -- it's

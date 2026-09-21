@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import threading
 import time
@@ -67,12 +68,16 @@ def _require_valid_session_id(session_id: str) -> None:
 
 
 def _client_ip(request: Request) -> str:
-    """Render sits behind a proxy, so the real visitor IP is the first entry
-    of X-Forwarded-For when present; request.client.host (the proxy's own
-    address) is the fallback for direct/local connections."""
+    """Render's proxy appends exactly one hop to X-Forwarded-For -- the LAST
+    entry is the value Render's own edge appended, and the only trustworthy
+    one. Earlier entries (including the first) are caller-supplied and
+    trivially spoofable by any client wanting a fresh rate-limit bucket per
+    request."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -144,7 +149,17 @@ def _prewarm_llm_cache() -> None:
     try/except alone only guards against a raised exception, not a hang, and
     startup must not wait minutes for a cache warm-up that's a pure
     performance nicety.
+
+    set_session_id("prewarm") makes these real, billable LLM calls count
+    toward the daily budget cap too -- app/core/budget.py's listener
+    otherwise silently skips any llm_attempt event with no session in the
+    request_context contextvar (see budget.record_llm_attempt), and this
+    runs outside any request so that contextvar would otherwise stay unset.
+    today_spend_usd() sums BudgetEntry rows across ALL sessions for the day
+    (no per-session filter), so this sentinel session id just becomes part
+    of the same daily total the cap already checks.
     """
+    set_session_id("prewarm")
     for prompt in _PREWARM_PROMPTS:
         if prompt in _prewarmed_prompts:
             continue
@@ -175,7 +190,14 @@ async def lifespan(app: FastAPI):
     # warm-up that finishes late (or never, if the process exits first) is
     # harmless; upgrade to an explicit per-call timeout if orphaned real calls
     # ever prove wasteful (cost/log noise) in practice.
-    threading.Thread(target=_prewarm_llm_cache, name="llm-cache-prewarm", daemon=True).start()
+    #
+    # Gated on both: llm_cache_enabled (QP_LLM_CACHE_ENABLED=false must mean
+    # pre-warm never fires, not just "the cache is a no-op once warmed") and
+    # PYTEST_CURRENT_TEST (pytest sets this for the duration of every test
+    # run, so real/billable provider calls never fire during the test suite
+    # -- no fixture or monkeypatch needed anywhere else).
+    if settings.llm_cache_enabled and not os.environ.get("PYTEST_CURRENT_TEST"):
+        threading.Thread(target=_prewarm_llm_cache, name="llm-cache-prewarm", daemon=True).start()
 
     register_llm_attempt_listener(budget.record_llm_attempt)
 
@@ -290,12 +312,27 @@ def _run_graph_stream(session_id: str, config: dict, graph_input) -> Generator[s
 
                 if partial and partial.get("error"):
                     reason = partial["error"]
-                    code = classify_reason_to_code(reason)
-                    yield _sse("error", {"code": code.value, "message": reason, "node": node_name})
+                    if "client_error" in partial:
+                        code = ErrorCode.INTERNAL
+                        message = partial["client_error"]
+                        logger.warning(
+                            "Node %s reported an error not shown to the client verbatim: %s", node_name, reason
+                        )
+                    else:
+                        code = classify_reason_to_code(reason)
+                        message = reason
+                    yield _sse("error", {"code": code.value, "message": message, "node": node_name})
 
                 event_name = NODE_EVENT_MAP.get(node_name)
                 if event_name and partial:
-                    yield _sse(event_name, partial)
+                    # "error"/"client_error" are internal-only fields already
+                    # surfaced (sanitized) via the "error" SSE event above --
+                    # never forward them again raw inside this second,
+                    # node-specific event (e.g. analytics_executor's "result"
+                    # payload on a DB-exception failure).
+                    payload = {k: v for k, v in partial.items() if k not in ("error", "client_error")}
+                    if payload:
+                        yield _sse(event_name, payload)
     except Exception as exc:  # noqa: BLE001 - surface to the client instead of a bare 500 mid-stream
         # Manually formatted + redacted, not logger.exception(...): that
         # method's own exc_info=True traceback formatting can't be
@@ -332,7 +369,17 @@ def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     # reads it via state.get("query_history", []), so omitting the key lets
     # the checkpointer's accumulated value carry forward across turns, and
     # still defaults to [] cleanly on a brand-new thread.
-    graph_input = {"user_input": req.message}
+    #
+    # "error" is the opposite case: it's genuinely per-turn state, not
+    # accumulated history, so explicitly resetting it here is correct (and
+    # does not reintroduce the query_history-wiping bug above -- different
+    # key, different semantics). Without this, a guardrail block on turn N
+    # leaves state["error"] set for every later turn in the same
+    # checkpointed session, permanently defeating sql_generator_node's cache
+    # guard (its "prior_error is None" check) and injecting a nonsense
+    # "Previous error: Guardrail blocked..." into every subsequent
+    # SQL-generation prompt for that session.
+    graph_input = {"user_input": req.message, "error": None}
     return StreamingResponse(_run_graph_stream(req.session_id, config, graph_input), media_type="text/event-stream")
 
 

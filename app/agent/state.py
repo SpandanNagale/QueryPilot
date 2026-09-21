@@ -69,6 +69,7 @@ class AgentState(TypedDict):
     manipulation_started_at: NotRequired[float]
     execution_result: NotRequired[ExecutionResult]
     error: NotRequired[str]
+    client_error: NotRequired[str]
     retry_count: NotRequired[int]
     final_response: NotRequired[str]
     chart_spec: NotRequired[ChartSpec | None]

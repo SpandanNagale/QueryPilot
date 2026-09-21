@@ -131,26 +131,60 @@ def test_a_different_ip_is_not_blocked_by_the_first(monkeypatch, tmp_path):
     main_module.chat(req, _make_request(client_host="10.0.1.4"))
 
 
-def test_x_forwarded_for_first_entry_is_used(monkeypatch, tmp_path):
+def test_x_forwarded_for_last_entry_is_used(monkeypatch, tmp_path):
+    """Render's proxy appends exactly one hop -- the LAST entry is the one
+    Render itself appended, and the only trustworthy value. Earlier entries
+    are caller-supplied. Same rightmost (real) entry, different leftmost
+    (spoofable) entry -- must be treated as the SAME caller."""
     monkeypatch.setattr(settings, "session_dir", tmp_path)
     monkeypatch.setattr(settings, "rate_limit_per_minute", 1)
     _fake_clock(monkeypatch)
     req = main_module.ChatRequest(session_id=str(uuid.uuid4()), message="hi")
-    # Same proxy client_host, different X-Forwarded-For -- must be treated
-    # as different callers, proving the header (not request.client.host)
-    # drives the bucket key when present.
+
     main_module.chat(
         req, _make_request(headers={"X-Forwarded-For": "10.0.1.5, 172.16.0.1"}, client_host="172.16.0.1")
     )
     with pytest.raises(HTTPException) as exc_info:
+        # A different (spoofed) leftmost entry, same rightmost (real) hop --
+        # must still hit the same bucket, not get a fresh one.
         main_module.chat(
-            req, _make_request(headers={"X-Forwarded-For": "10.0.1.5, 172.16.0.1"}, client_host="172.16.0.1")
+            req, _make_request(headers={"X-Forwarded-For": "9.9.9.9, 172.16.0.1"}, client_host="172.16.0.1")
         )
     assert exc_info.value.status_code == 429
-    # A different forwarded IP behind the same proxy still gets through.
+    assert exc_info.value.detail["code"] == "RATE_LIMITED"
+
+    # A genuinely different rightmost (real) hop is a different caller.
     main_module.chat(
-        req, _make_request(headers={"X-Forwarded-For": "10.0.1.6, 172.16.0.1"}, client_host="172.16.0.1")
+        req, _make_request(headers={"X-Forwarded-For": "10.0.1.6, 172.16.0.2"}, client_host="172.16.0.2")
     )
+
+
+def test_x_forwarded_for_spoofed_leftmost_entry_still_gets_rate_limited(monkeypatch, tmp_path):
+    """The actual security property being restored: a client sending a
+    fresh, different spoofed leftmost entry on EVERY request must not get a
+    fresh rate-limit bucket each time -- the rightmost (proxy-appended)
+    entry stays constant, so the bucket is shared correctly."""
+    monkeypatch.setattr(settings, "session_dir", tmp_path)
+    monkeypatch.setattr(settings, "rate_limit_per_minute", 2)
+    _fake_clock(monkeypatch)
+    req = main_module.ChatRequest(session_id=str(uuid.uuid4()), message="hi")
+
+    for i in range(2):
+        main_module.chat(
+            req,
+            _make_request(
+                headers={"X-Forwarded-For": f"spoofed-{i}-{uuid.uuid4()}, 172.16.0.9"}, client_host="172.16.0.9"
+            ),
+        )
+    with pytest.raises(HTTPException) as exc_info:
+        main_module.chat(
+            req,
+            _make_request(
+                headers={"X-Forwarded-For": f"spoofed-final-{uuid.uuid4()}, 172.16.0.9"}, client_host="172.16.0.9"
+            ),
+        )
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.detail["code"] == "RATE_LIMITED"
 
 
 def test_missing_x_forwarded_for_falls_back_to_client_host(monkeypatch, tmp_path):
