@@ -25,8 +25,8 @@ real seasonal pattern (summer spike, monsoon dip).
 
 | | |
 |---|---|
-| Frontend (Vercel) | _add your deployed URL here after following [Deployment](#deployment) below_ |
-| Backend (Render) | _add your deployed URL here_ |
+| Frontend (Vercel) | https://query-pilot-nine.vercel.app/ |
+| Backend (Render) | https://querypilot-backend-onts.onrender.com|
 | Fallback UI | `<backend URL>/` — `frontend/index.html`, served directly by FastAPI, no build step |
 
 The backend is a Render free-tier instance: it spins down after 15 minutes
