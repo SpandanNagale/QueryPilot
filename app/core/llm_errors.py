@@ -62,7 +62,10 @@ class FallbackAction(Enum):
 
 
 _NO_ADVANCE_STATUS_CODES = frozenset({400, 422})
-_ADVANCE_IMMEDIATELY_STATUS_CODES = frozenset({401, 403, 404, 408, 413, 429, 503, 529})
+# 402: provider/model requires payment (e.g. Ollama Cloud once a free tier is
+# exhausted or the account has no paid plan) -- not this deployment's fault,
+# advance to the next one in the chain rather than failing the whole request.
+_ADVANCE_IMMEDIATELY_STATUS_CODES = frozenset({401, 402, 403, 404, 408, 413, 429, 503, 529})
 
 
 def _status_code(exc: Exception) -> int | None:

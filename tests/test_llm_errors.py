@@ -55,9 +55,15 @@ def test_named_openai_exceptions_advance_immediately(exc_cls, status):
     assert classify_exception(exc) is FallbackAction.ADVANCE_IMMEDIATELY
 
 
-@pytest.mark.parametrize("status_code", [408, 413, 503, 529])
+@pytest.mark.parametrize("status_code", [402, 408, 413, 503, 529])
 def test_generic_advance_worthy_status_codes(status_code):
     assert classify_exception(_api_status_error(status_code)) is FallbackAction.ADVANCE_IMMEDIATELY
+
+
+def test_ollama_payment_required_advances_immediately():
+    import ollama
+
+    assert classify_exception(ollama.ResponseError("payment required", 402)) is FallbackAction.ADVANCE_IMMEDIATELY
 
 
 @pytest.mark.parametrize("status_code", [400, 422])
